@@ -13,17 +13,15 @@ from hivemind.commands.migrate import (
     print_migration_summary,
 )
 from hivemind.core.config import HivemindConfig, default_config
-from hivemind.installer.hooks import install_hooks
 from hivemind.installer.profiles import install_profiles
-from hivemind.installer.skills import install_skills
+from hivemind.installer.skills import install_plugin
 
 
 _IMPORTANT_FRONTMATTER = "---\nhits: {}\n---\n"
 
 # Package-level directories for bundled assets.
 _PKG_ROOT = Path(__file__).resolve().parent.parent
-_SKILLS_DIR = _PKG_ROOT / "skills"
-_HOOKS_DIR = _PKG_ROOT / "hooks"
+_PLUGIN_DIR = _PKG_ROOT / "plugin"
 
 
 def _ensure_dir(path: Path) -> bool:
@@ -87,7 +85,6 @@ def run_installers(
     config_path: Path,
     *,
     skills_source: Path | None = None,
-    hooks_source: Path | None = None,
 ) -> dict[str, list[str] | bool]:
     """Run all Claude Code installers and return a summary.
 
@@ -96,9 +93,7 @@ def run_installers(
     config_path:
         Path to ``.hivemind.json`` in the data directory.
     skills_source:
-        Override for the package skills directory.
-    hooks_source:
-        Override for the package hooks directory.
+        Override for the plugin source directory.
 
     Returns
     -------
@@ -108,19 +103,15 @@ def run_installers(
     """
     summary: dict[str, list[str] | bool] = {}
 
-    # --- Skills --------------------------------------------------------------
-    src = skills_source if skills_source is not None else _SKILLS_DIR
-    if src.is_dir():
-        installed = install_skills(src)
+    # --- Plugin (skills + hooks) ---------------------------------------------
+    src = skills_source if skills_source is not None else _PLUGIN_DIR
+    if src.is_dir() and (src / ".claude-plugin" / "plugin.json").exists():
+        installed = install_plugin(src)
         summary["skills"] = installed
         summary["skills_skipped"] = False
     else:
         summary["skills"] = []
         summary["skills_skipped"] = True
-
-    # --- Hooks ---------------------------------------------------------------
-    hsrc = hooks_source if hooks_source is not None else _HOOKS_DIR
-    summary["hooks"] = install_hooks(hsrc)
 
     # --- Profiles ------------------------------------------------------------
     summary["profiles"] = install_profiles(config_path)
