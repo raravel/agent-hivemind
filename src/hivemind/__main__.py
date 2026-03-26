@@ -6,6 +6,7 @@ from typing import Optional
 
 import click
 
+from hivemind.commands.audit import audit as _audit_cmd
 from hivemind.commands.config_cmd import config_cmd as _config_cmd
 from hivemind.commands.feedback import feedback as _feedback_group
 from hivemind.commands.important import important as _important_group
@@ -87,13 +88,7 @@ cli.add_command(_important_group)
 
 # --- audit ---
 
-
-@cli.command()
-@click.option("--project", "-p", required=True, help="Project to audit.")
-@click.option("--fix", is_flag=True, default=False, help="Auto-fix issues.")
-def audit(project: str, fix: bool) -> None:
-    """Audit a project for issues."""
-    click.echo("Not implemented yet")
+cli.add_command(_audit_cmd)
 
 
 # --- stats ---
