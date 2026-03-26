@@ -7,6 +7,11 @@ from pathlib import Path
 
 import click
 
+from hivemind.commands.migrate import (
+    detect_v1,
+    migrate_v1_to_v2,
+    print_migration_summary,
+)
 from hivemind.core.config import HivemindConfig, default_config
 from hivemind.installer.hooks import install_hooks
 from hivemind.installer.profiles import install_profiles
@@ -197,6 +202,13 @@ def init_cmd(path: str | None, *, use_git: bool) -> None:
         data_path = Path("~/agent-hivemind-data").expanduser().resolve()
 
     click.echo(f"Initializing hivemind data at: {data_path}")
+
+    # --- v1 migration check ---------------------------------------------------
+    if detect_v1(data_path):
+        click.echo("Detected v1 data directory. Running migration...")
+        migration_summary = migrate_v1_to_v2(data_path)
+        print_migration_summary(migration_summary)
+        click.echo("")
 
     created = init_data_dir(data_path)
 
