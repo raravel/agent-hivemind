@@ -40,3 +40,7 @@ python_version = "3.11"
 [[tool.mypy.overrides]]
 module = "frontmatter"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "rank_bm25"
+ignore_missing_imports = true
