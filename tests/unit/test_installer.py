@@ -118,7 +118,9 @@ class TestInstallHooks:
         entries = data["hooks"]["PreToolUse"]
         assert len(entries) == 1
         assert entries[0]["matcher"] == "Bash"
-        assert "~/.claude/hooks/hv-pre-commit.js" in entries[0]["hooks"]
+        hook_item = entries[0]["hooks"][0]
+        assert hook_item["type"] == "command"
+        assert "hv-pre-commit.js" in hook_item["command"]
 
     def test_preserves_existing_hooks(self, tmp_path: Path) -> None:
         source = self._make_source(tmp_path)

@@ -120,7 +120,13 @@ def install_hooks(
         new_entries[event].append(
             {
                 "matcher": "Bash",
-                "hooks": [hook_ref],
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": f"node {hook_ref}",
+                        "timeout": 10,
+                    }
+                ],
             }
         )
 
