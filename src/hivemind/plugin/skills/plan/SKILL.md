@@ -27,7 +27,7 @@ Research what you need (library docs, API specs, etc.) via web search BEFORE wri
 Create these files by writing directly to the filesystem:
 
 1. **`architecture.md`** — System architecture, module boundaries, data flow
-   - Component diagram (which modules exist, how they connect)
+   - Component diagram using **Mermaid** (`graph TD`, `flowchart`, `C4Context`, etc.)
    - Dependency direction rules
    - Key design decisions and rationale
 
@@ -47,8 +47,29 @@ Create these files by writing directly to the filesystem:
 
 5. **`features/`** — One file per feature with detailed spec
    - `features/00_feature-name.md` — Inputs, outputs, UI flow, API endpoints, edge cases
+   - Include **Mermaid** diagrams for data flow, sequence diagrams, state machines, ER diagrams where appropriate
    - Include enough detail that an agent can implement without ambiguity
    - Reference specific library APIs, data models, route paths
+
+### Diagram Rules
+
+Use **Mermaid** for all diagrams in harness documents:
+
+- **Architecture / component relationships**: `graph TD` or `flowchart`
+- **API / interaction flow**: `sequenceDiagram`
+- **Data models / DB schema**: `erDiagram`
+- **State machines / status transitions**: `stateDiagram-v2`
+- **Task dependencies**: `graph LR` with `-->` edges
+
+Example:
+````markdown
+```mermaid
+graph TD
+    A[Client] --> B[API Server]
+    B --> C[Database]
+    B --> D[Cache]
+```
+````
 
 ### Phase 2: Task Creation
 
