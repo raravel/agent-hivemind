@@ -6,6 +6,7 @@ from typing import Optional
 
 import click
 
+from hivemind.commands.config_cmd import config_cmd as _config_cmd
 from hivemind.commands.feedback import feedback as _feedback_group
 from hivemind.commands.important import important as _important_group
 from hivemind.commands.init import init_cmd as _init_cmd
@@ -133,13 +134,7 @@ cli.add_command(_index_group)
 
 # --- config ---
 
-
-@cli.command()
-@click.argument("key", required=False, default=None)
-@click.argument("value", required=False, default=None)
-def config(key: Optional[str], value: Optional[str]) -> None:
-    """View or set configuration values."""
-    click.echo("Not implemented yet")
+cli.add_command(_config_cmd)
 
 
 if __name__ == "__main__":
