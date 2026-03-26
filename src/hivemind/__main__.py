@@ -7,6 +7,7 @@ from typing import Optional
 import click
 
 from hivemind.commands.feedback import feedback as _feedback_group
+from hivemind.commands.important import important as _important_group
 from hivemind.commands.init import init_cmd as _init_cmd
 
 
@@ -128,30 +129,7 @@ def search(query: str, project: Optional[str]) -> None:
 
 # --- important group ---
 
-
-@cli.group()
-def important() -> None:
-    """Manage important items."""
-
-
-@important.command()
-@click.argument("item")
-def promote(item: str) -> None:
-    """Promote an item to important."""
-    click.echo("Not implemented yet")
-
-
-@important.command()
-@click.argument("item")
-def demote(item: str) -> None:
-    """Demote an item from important."""
-    click.echo("Not implemented yet")
-
-
-@important.command()
-def generate() -> None:
-    """Generate important items summary."""
-    click.echo("Not implemented yet")
+cli.add_command(_important_group)
 
 
 # --- audit ---
