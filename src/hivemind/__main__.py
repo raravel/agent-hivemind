@@ -11,6 +11,7 @@ from hivemind.commands.feedback import feedback as _feedback_group
 from hivemind.commands.important import important as _important_group
 from hivemind.commands.init import init_cmd as _init_cmd
 from hivemind.commands.link import link_cmd as _link_cmd
+from hivemind.commands.run import run as _run_cmd
 from hivemind.commands.search import index as _index_group
 from hivemind.commands.search import search as _search_cmd
 from hivemind.commands.task import task as _task_group
@@ -39,13 +40,7 @@ cli.add_command(_task_group)
 
 # --- run ---
 
-
-@cli.command()
-@click.option("--project", "-p", default=None, help="Project name.")
-@click.option("--task", "-t", "task_id", default=None, help="Task ID.")
-def run(project: Optional[str], task_id: Optional[str]) -> None:
-    """Run an agent on a project/task."""
-    click.echo("Not implemented yet")
+cli.add_command(_run_cmd)
 
 
 # --- log group ---
