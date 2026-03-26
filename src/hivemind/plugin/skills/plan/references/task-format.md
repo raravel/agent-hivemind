@@ -18,6 +18,46 @@ updated: 2025-01-15
 ---
 ```
 
+## Required Body
+
+Every task MUST have a markdown body with these sections:
+
+```markdown
+## Description
+Brief explanation of what this task implements and why.
+
+## Spec References
+- `projects/{project}/architecture.md` — module boundaries
+- `projects/{project}/features/01_auth.md` — authentication spec
+
+## Completion Criteria
+- [ ] POST /api/auth/login returns 200 with valid credentials
+- [ ] POST /api/auth/login returns 401 with invalid credentials
+- [ ] JWT token is stored in httpOnly cookie
+- [ ] `npm run lint` passes
+- [ ] `npm test` passes
+```
+
+### Completion Criteria Rules
+
+Each criterion must be:
+- **Concrete**: "Returns 200 on POST /api/todos" not "works correctly"
+- **Verifiable**: Can be checked by running a command or inspecting output
+- **Independent**: Each criterion can be verified on its own
+
+Always include:
+- At least one **functional** criterion (what the code does)
+- At least one **build/lint** criterion (code quality gate)
+- **Integration** criteria if the task touches multiple modules
+
+### Spec References
+
+Link to harness documents that the task implementer should read:
+- `projects/{project}/architecture.md` — for module boundaries and data flow
+- `projects/{project}/tech-stack.md` — for library versions and usage patterns
+- `projects/{project}/features/*.md` — for detailed feature specs
+- `projects/{project}/build-verify.md` — for build and test commands
+
 ## Fields
 
 | Field        | Type       | Required | Description                              |
@@ -31,17 +71,11 @@ updated: 2025-01-15
 | `created`   | date       | yes      | ISO date of creation                     |
 | `updated`   | date       | yes      | ISO date of last update                  |
 
-## Body
-
-The markdown body below the frontmatter contains the task description, acceptance criteria, implementation notes, or any other relevant details. The body is free-form markdown.
-
 ## Task ID Format
 
 Task IDs follow the pattern `{PREFIX}-{NNN}` where:
 - `PREFIX` is the 2-3 character project prefix (auto-generated from project name)
 - `NNN` is a zero-padded sequential counter (e.g., 001, 002, ...)
-
-The counter is tracked in `.hivemind.json` under `projects.{name}.counter`.
 
 ## Status Transitions
 
