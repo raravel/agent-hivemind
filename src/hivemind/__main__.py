@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import click
 
 from hivemind.commands.audit import audit as _audit_cmd
@@ -15,6 +13,7 @@ from hivemind.commands.link import link_cmd as _link_cmd
 from hivemind.commands.run import run as _run_cmd
 from hivemind.commands.search import index as _index_group
 from hivemind.commands.search import search as _search_cmd
+from hivemind.commands.stats import stats as _stats_cmd
 from hivemind.commands.task import task as _task_group
 
 
@@ -93,13 +92,7 @@ cli.add_command(_audit_cmd)
 
 # --- stats ---
 
-
-@cli.command()
-@click.option("--project", "-p", required=True, help="Project to show stats for.")
-@click.option("--since", default=None, help="Start date for stats.")
-def stats(project: str, since: Optional[str]) -> None:
-    """Show project statistics."""
-    click.echo("Not implemented yet")
+cli.add_command(_stats_cmd)
 
 
 # --- filter ---

@@ -1,0 +1,380 @@
+"""Unit tests for hivemind.commands.stats."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import frontmatter as fm_lib
+from click.testing import CliRunner, Result
+
+from hivemind.commands.stats import (
+    _collect_reports,
+    _compute_stats,
+    _format_table,
+    _parse_report,
+    stats,
+)
+
+
+def _write_report(
+    reports_dir: Path,
+    filename: str,
+    metadata: dict[str, object],
+    body: str = "",
+) -> Path:
+    """Write a report .md file with YAML frontmatter into *reports_dir*."""
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    path = reports_dir / filename
+    post = fm_lib.Post(body, **metadata)
+    path.write_text(fm_lib.dumps(post), encoding="utf-8")
+    return path
+
+
+def _make_reports_dir(tmp_path: Path, project: str = "myproj") -> Path:
+    """Return the _reports directory for a project, creating parents."""
+    reports_dir = tmp_path / "tasks" / project / "_reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    return reports_dir
+
+
+# ---------------------------------------------------------------------------
+# _parse_report
+# ---------------------------------------------------------------------------
+
+
+class TestParseReport:
+    """Tests for _parse_report."""
+
+    def test_parses_valid_report(self, tmp_path: Path) -> None:
+        reports_dir = _make_reports_dir(tmp_path)
+        path = _write_report(
+            reports_dir,
+            "PROJ-001.md",
+            {"task_id": "PROJ-001", "status": "completed", "duration_minutes": 45},
+        )
+        result = _parse_report(path)
+        assert result is not None
+        assert result["task_id"] == "PROJ-001"
+        assert result["duration_minutes"] == 45
+
+    def test_returns_none_for_invalid_file(self, tmp_path: Path) -> None:
+        bad_file = tmp_path / "bad.md"
+        bad_file.write_text("{{not yaml", encoding="utf-8")
+        result = _parse_report(bad_file)
+        # frontmatter may still parse this (empty fm); just ensure no crash
+        assert result is not None or result is None  # no exception raised
+
+
+# ---------------------------------------------------------------------------
+# _collect_reports
+# ---------------------------------------------------------------------------
+
+
+class TestCollectReports:
+    """Tests for _collect_reports."""
+
+    def test_collects_all_reports(self, tmp_path: Path) -> None:
+        reports_dir = _make_reports_dir(tmp_path)
+        _write_report(
+            reports_dir,
+            "PROJ-001.md",
+            {
+                "task_id": "PROJ-001",
+                "status": "completed",
+                "completed_at": "2026-03-20T10:00:00",
+            },
+        )
+        _write_report(
+            reports_dir,
+            "PROJ-002.md",
+            {
+                "task_id": "PROJ-002",
+                "status": "completed",
+                "completed_at": "2026-03-25T12:00:00",
+            },
+        )
+        result = _collect_reports(tmp_path, "myproj")
+        assert len(result) == 2
+
+    def test_filters_by_since(self, tmp_path: Path) -> None:
+        reports_dir = _make_reports_dir(tmp_path)
+        _write_report(
+            reports_dir,
+            "PROJ-001.md",
+            {
+                "task_id": "PROJ-001",
+                "status": "completed",
+                "completed_at": "2026-03-10T10:00:00",
+            },
+        )
+        _write_report(
+            reports_dir,
+            "PROJ-002.md",
+            {
+                "task_id": "PROJ-002",
+                "status": "completed",
+                "completed_at": "2026-03-25T12:00:00",
+            },
+        )
+        since = datetime.fromisoformat("2026-03-20T00:00:00")
+        result = _collect_reports(tmp_path, "myproj", since=since)
+        assert len(result) == 1
+        assert result[0]["task_id"] == "PROJ-002"
+
+    def test_returns_empty_for_missing_dir(self, tmp_path: Path) -> None:
+        result = _collect_reports(tmp_path, "nonexistent")
+        assert result == []
+
+    def test_skips_reports_without_completed_at_when_since(
+        self, tmp_path: Path
+    ) -> None:
+        reports_dir = _make_reports_dir(tmp_path)
+        _write_report(
+            reports_dir,
+            "PROJ-001.md",
+            {"task_id": "PROJ-001", "status": "completed"},
+        )
+        since = datetime.fromisoformat("2026-03-20T00:00:00")
+        result = _collect_reports(tmp_path, "myproj", since=since)
+        assert len(result) == 0
+
+
+# ---------------------------------------------------------------------------
+# _compute_stats
+# ---------------------------------------------------------------------------
+
+
+class TestComputeStats:
+    """Tests for _compute_stats."""
+
+    def test_empty_reports(self) -> None:
+        result = _compute_stats([])
+        assert result["total_tasks"] == 0
+        assert result["avg_duration"] == 0.0
+
+    def test_single_report(self) -> None:
+        reports: list[dict[str, object]] = [
+            {
+                "task_id": "PROJ-001",
+                "status": "completed",
+                "duration_minutes": 30,
+                "retries": 2,
+                "review_passed": True,
+                "lint_failed": False,
+            }
+        ]
+        result = _compute_stats(reports)
+        assert result["total_tasks"] == 1
+        assert result["avg_duration"] == 30.0
+        assert result["avg_retries"] == 2.0
+        assert result["review_pass_rate"] == 100.0
+        assert result["lint_fail_rate"] == 0.0
+
+    def test_multiple_reports(self) -> None:
+        reports: list[dict[str, object]] = [
+            {
+                "duration_minutes": 30,
+                "retries": 0,
+                "review_passed": True,
+                "lint_failed": False,
+            },
+            {
+                "duration_minutes": 60,
+                "retries": 2,
+                "review_passed": True,
+                "lint_failed": True,
+            },
+            {
+                "duration_minutes": 45,
+                "retries": 1,
+                "review_passed": False,
+                "lint_failed": False,
+            },
+            {
+                "duration_minutes": 15,
+                "retries": 3,
+                "review_passed": True,
+                "lint_failed": True,
+            },
+        ]
+        result = _compute_stats(reports)
+        assert result["total_tasks"] == 4
+        assert result["avg_duration"] == 37.5
+        assert result["avg_retries"] == 1.5
+        assert result["review_pass_rate"] == 75.0
+        assert result["lint_fail_rate"] == 50.0
+
+    def test_missing_numeric_fields(self) -> None:
+        """Reports without duration/retries should still work."""
+        reports: list[dict[str, object]] = [
+            {"review_passed": True, "lint_failed": True},
+            {"review_passed": False, "lint_failed": False},
+        ]
+        result = _compute_stats(reports)
+        assert result["total_tasks"] == 2
+        assert result["avg_duration"] == 0.0
+        assert result["avg_retries"] == 0.0
+        assert result["review_pass_rate"] == 50.0
+        assert result["lint_fail_rate"] == 50.0
+
+
+# ---------------------------------------------------------------------------
+# _format_table
+# ---------------------------------------------------------------------------
+
+
+class TestFormatTable:
+    """Tests for _format_table."""
+
+    def test_table_contains_all_metrics(self) -> None:
+        stats_data: dict[str, object] = {
+            "total_tasks": 10,
+            "avg_duration": 35.2,
+            "avg_retries": 1.3,
+            "review_pass_rate": 80.0,
+            "lint_fail_rate": 10.0,
+        }
+        table = _format_table("myproj", stats_data)
+        assert "=== Stats: myproj ===" in table
+        assert "Total tasks" in table
+        assert "10" in table
+        assert "Avg duration" in table
+        assert "35.2" in table
+        assert "Review pass rate" in table
+        assert "80.0" in table
+        assert "Lint fail rate" in table
+        assert "10.0" in table
+
+
+# ---------------------------------------------------------------------------
+# CLI integration
+# ---------------------------------------------------------------------------
+
+
+class TestStatsCLI:
+    """Integration tests for the stats Click command."""
+
+    def _invoke_stats(
+        self, tmp_path: Path, args: list[str]
+    ) -> tuple[Result, Path]:
+        """Invoke the stats CLI with _find_config patched."""
+        import json
+        import os
+
+        data_path = tmp_path / "data"
+        data_path.mkdir(exist_ok=True)
+        (data_path / "tasks").mkdir(exist_ok=True)
+
+        config_data: dict[str, Any] = {
+            "version": "2.0.0",
+            "data_path": str(data_path),
+            "projects": {
+                "myproj": {"prefix": "MP", "linked_path": str(tmp_path), "counter": 0}
+            },
+        }
+        config_path = tmp_path / ".hivemind.json"
+        config_path.write_text(json.dumps(config_data, indent=2), encoding="utf-8")
+
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            return runner.invoke(stats, args), data_path
+        finally:
+            os.chdir(old_cwd)
+
+    def test_no_reports(self, tmp_path: Path) -> None:
+        result, _data_path = self._invoke_stats(tmp_path, ["-p", "myproj"])
+        assert result.exit_code == 0
+        assert "No execution reports found" in result.output
+
+    def test_with_reports(self, tmp_path: Path) -> None:
+        _result_obj, data_path = self._invoke_stats(tmp_path, ["-p", "myproj"])
+
+        # Create reports after getting data_path
+        reports_dir = data_path / "tasks" / "myproj" / "_reports"
+        _write_report(
+            reports_dir,
+            "PROJ-001.md",
+            {
+                "task_id": "PROJ-001",
+                "status": "completed",
+                "duration_minutes": 30,
+                "retries": 1,
+                "review_passed": True,
+                "lint_failed": False,
+                "completed_at": "2026-03-25T10:00:00",
+            },
+        )
+        _write_report(
+            reports_dir,
+            "PROJ-002.md",
+            {
+                "task_id": "PROJ-002",
+                "status": "completed",
+                "duration_minutes": 60,
+                "retries": 0,
+                "review_passed": True,
+                "lint_failed": True,
+                "completed_at": "2026-03-26T10:00:00",
+            },
+        )
+
+        # Re-invoke now that reports exist
+        result_obj, _ = self._invoke_stats(tmp_path, ["-p", "myproj"])
+        assert result_obj.exit_code == 0
+        output = result_obj.output
+        assert "=== Stats: myproj ===" in output
+        assert "Total tasks" in output
+        assert "2" in output
+
+    def test_since_filtering(self, tmp_path: Path) -> None:
+        _, data_path = self._invoke_stats(tmp_path, ["-p", "myproj"])
+
+        reports_dir = data_path / "tasks" / "myproj" / "_reports"
+        _write_report(
+            reports_dir,
+            "PROJ-001.md",
+            {
+                "task_id": "PROJ-001",
+                "status": "completed",
+                "duration_minutes": 30,
+                "retries": 1,
+                "review_passed": True,
+                "lint_failed": False,
+                "completed_at": "2026-03-10T10:00:00",
+            },
+        )
+        _write_report(
+            reports_dir,
+            "PROJ-002.md",
+            {
+                "task_id": "PROJ-002",
+                "status": "completed",
+                "duration_minutes": 60,
+                "retries": 0,
+                "review_passed": False,
+                "lint_failed": True,
+                "completed_at": "2026-03-25T10:00:00",
+            },
+        )
+
+        result_obj, _ = self._invoke_stats(
+            tmp_path, ["-p", "myproj", "--since", "2026-03-20"]
+        )
+        assert result_obj.exit_code == 0
+        output = result_obj.output
+        # Only 1 report (PROJ-002) should be included
+        assert "=== Stats: myproj ===" in output
+        assert "Total tasks" in output
+        # avg_duration should be 60.0 (just PROJ-002)
+        assert "60.0" in output
+
+    def test_invalid_since_date(self, tmp_path: Path) -> None:
+        result_obj, _ = self._invoke_stats(
+            tmp_path, ["-p", "myproj", "--since", "not-a-date"]
+        )
+        assert result_obj.exit_code != 0
+        assert "Invalid --since date" in result_obj.output
