@@ -14,10 +14,33 @@ _SETTINGS_DEFAULT = Path("~/.claude/settings.json")
 _HV_HOOK_PREFIX = "~/.claude/hooks/hv-"
 
 
-def _is_hivemind_hook_entry(entry: dict[str, Any]) -> bool:
-    """Return True if *entry* contains a hivemind-managed hook path."""
-    hooks_list: list[str] = entry.get("hooks", [])
-    return any(h.startswith(_HV_HOOK_PREFIX) for h in hooks_list)
+def _hook_ref_str(hook: str | dict[str, Any]) -> str:
+    """Extract the hook path string regardless of format.
+
+    Hook items in settings.json can be plain strings (``"path/to/hook.js"``)
+    or dicts (``{"type": "command", "command": "node hook.js"}``).
+    """
+    if isinstance(hook, str):
+        return hook
+    if isinstance(hook, dict):
+        # Try common dict keys that hold the path/command.
+        for key in ("command", "path", "hooks"):
+            val = hook.get(key, "")
+            if isinstance(val, str):
+                return val
+    return ""
+
+
+def _is_hivemind_hook_entry(entry: str | dict[str, Any]) -> bool:
+    """Return True if *entry* contains a hivemind-managed hook path.
+
+    Handles both dict entries (``{"matcher": ..., "hooks": [...]}``) and
+    plain-string entries that some settings.json variants use.
+    """
+    if isinstance(entry, str):
+        return entry.startswith(_HV_HOOK_PREFIX) or "/hv-" in entry
+    hooks_list: list[str | dict[str, Any]] = entry.get("hooks", [])
+    return any(_hook_ref_str(h).startswith(_HV_HOOK_PREFIX) or "/hv-" in _hook_ref_str(h) for h in hooks_list)
 
 
 def _merge_hooks(
