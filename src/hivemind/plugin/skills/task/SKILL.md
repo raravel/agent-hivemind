@@ -1,90 +1,119 @@
-# /hv:task -- Task management orchestration
+# /hv:task -- Task execution pipeline
 
-Orchestrates task creation, listing, inspection, updating, and next-task selection via the `hv task` CLI command group. Can decompose complex requests into multiple tasks.
+Orchestrates the full task execution pipeline: fetches the next task, runs a sequence of specialized agents (coder, tester, code reviewer), manages status transitions, and records execution reports.
 
 ## When to use
 
-- User wants to create, list, view, update, or pick the next task
-- User says "add a task", "what's next", "show tasks", "update task status"
-- User runs `/hv:task` explicitly
-- User describes work that should be decomposed into tasks
+- User says "run the next task", "execute task", "start working on tasks"
+- User runs `/hv:run-task` explicitly
+- Automated pipeline execution is needed
 
 ## Steps
 
-### Creating a task
+### 1. Fetch the next task
 
-1. **Gather task details.** If the user provides a vague request, invoke `/clarify` to decompose it into concrete tasks with clear titles, priorities, and dependencies.
+Get the task to execute via `hv run`:
+```
+hv run --format json
+```
+Or for a specific project:
+```
+hv run -p <project> --format json
+```
+Or a specific task:
+```
+hv run -t <TASK-ID> --format json
+```
 
-2. **Create the task.** Run:
-   ```
-   hv task create -p <project> -t "<title>" --priority <high|medium|low> --type <task|bug|feature|chore>
-   ```
-   To add dependencies:
-   ```
-   hv task create -p <project> -t "<title>" --depends <TASK-ID> --depends <TASK-ID>
-   ```
+The command returns JSON with `id`, `frontmatter`, `body`, and `path`. If it exits with code 1, there are no tasks available -- stop.
 
-3. **Report the created task ID and file path.**
+### 2. Mark task as in_progress
 
-### Listing tasks
+```
+hv task update <TASK-ID> --status in_progress
+```
 
-1. **List all tasks or filter:**
-   ```
-   hv task list
-   hv task list -p <project>
-   hv task list -p <project> -s pending
-   hv task list --priority high
-   ```
+### 3. Load model profile
 
-### Getting task details
+Fetch the current model profile to determine which models to use for each agent role:
+```
+hv config model_profile
+```
+Then load the profile details:
+```
+hv config profiles.<profile_name>
+```
 
-1. **Get a specific task by ID:**
-   ```
-   hv task get <TASK-ID>
-   hv task get <TASK-ID> --format json
-   ```
+This returns a JSON object like:
+```json
+{
+  "planner": "opus",
+  "executor": "sonnet",
+  "reviewer": "sonnet"
+}
+```
 
-### Updating a task
+See [references/agent-prompts.md](references/agent-prompts.md) for the prompt templates used for each role.
 
-1. **Update status, priority, or title:**
-   ```
-   hv task update <TASK-ID> --status <pending|in_progress|done|blocked|cancelled>
-   hv task update <TASK-ID> --priority high
-   hv task update <TASK-ID> --title "New title"
-   ```
-   Multiple fields can be updated at once:
-   ```
-   hv task update <TASK-ID> --status in_progress --priority high
-   ```
+### 4. Stage 1 -- Coding Agent
 
-### Getting the next task
+Using the **executor** model from the profile, execute the task implementation:
 
-1. **Get the highest-priority actionable task:**
-   ```
-   hv task next
-   hv task next -p <project>
-   ```
-   This returns the highest-priority pending task whose dependencies are all done.
+- Read the task body for requirements and acceptance criteria
+- Search for relevant L1 knowledge: `hv search "<task title keywords>"`
+- Implement the code changes
+- Run linting and type checks
 
-### Batch task creation
+If the coding stage fails, follow the error escalation procedure in [references/error-handling.md](references/error-handling.md).
 
-When decomposing a larger request into multiple tasks:
+### 5. Stage 2 -- Test Agent
 
-1. Invoke `/clarify` to understand the full scope.
-2. Create tasks in dependency order (independent tasks first, dependent tasks after).
-3. Use `--depends` to wire up the dependency chain.
-4. List all created tasks at the end to confirm the plan.
+Using the **executor** model from the profile:
 
-## Task file format
+- Run the project's test suite
+- If tests fail, attempt to fix (up to 2 retries)
+- If tests still fail after retries, escalate per [references/error-handling.md](references/error-handling.md)
 
-See [references/task-format.md](references/task-format.md) for the frontmatter format used in task markdown files.
+### 6. Stage 3 -- Code Review Agent
+
+Using the **reviewer** model from the profile:
+
+- Review all changes made during the coding stage
+- Check for code quality, security issues, and adherence to project conventions
+- If review fails, send feedback to the coding agent for revision (up to 1 retry)
+- If review passes, proceed to completion
+
+### 7. Mark task as done
+
+```
+hv task update <TASK-ID> --status done
+```
+
+### 8. Record execution report
+
+Save a report to `{data_path}/tasks/{project}/_reports/{TASK-ID}-report.md` with:
+- Task ID, duration, retries count
+- Whether review passed
+- Whether lint failed
+- Any error notes
+
+### 9. Extract feedback
+
+Invoke `/hv:feedback` to capture any lessons learned during execution.
+
+See [references/pipeline-stages.md](references/pipeline-stages.md) for detailed stage descriptions.
 
 ## Important Rules
 
-- ALWAYS use the `hv task` CLI via Bash tool. Do NOT edit task files manually.
-- NEVER create a task without a `--project` flag.
-- ALWAYS validate that the project exists (was linked via `hv link`) before creating tasks.
-- Valid statuses: `pending`, `in_progress`, `done`, `blocked`, `cancelled`.
-- Valid priorities: `high`, `medium`, `low`.
-- NEVER write task content in Korean. All task titles and descriptions must be in English.
-- When decomposing work, prefer smaller focused tasks over large monolithic ones.
+- ALWAYS use `hv run --format json` to get structured task data.
+- ALWAYS mark the task as `in_progress` before starting work.
+- ALWAYS mark the task as `done` only after all stages pass.
+- ALWAYS use the model profile from `hv config` for agent model selection. Do NOT hardcode models.
+- NEVER skip the code review stage.
+- NEVER mark a task as `done` if tests are failing.
+- If a task is blocked by failures after all retries, mark it as `blocked`:
+  ```
+  hv task update <TASK-ID> --status blocked
+  ```
+- ALWAYS use Bash tool to run `hv` CLI commands. Do NOT import Python modules directly.
+- NEVER write reports or feedback in Korean. All content must be in English.
