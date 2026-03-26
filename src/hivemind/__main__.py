@@ -6,6 +6,8 @@ from typing import Optional
 
 import click
 
+from hivemind.commands.init import init_cmd as _init_cmd
+
 
 @click.group()
 @click.version_option(package_name="agent-hivemind")
@@ -13,11 +15,7 @@ def cli() -> None:
     """hv - Agent Hivemind CLI (v2)."""
 
 
-@cli.command()
-@click.option("--path", default=".", help="Path to initialize.")
-def init(path: str) -> None:
-    """Initialize a new hivemind workspace."""
-    click.echo("Not implemented yet")
+cli.add_command(_init_cmd)
 
 
 @cli.command()
