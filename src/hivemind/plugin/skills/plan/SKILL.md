@@ -1,3 +1,7 @@
+---
+description: "Task planning and decomposition. Use when the user wants to create, list, update, or manage tasks, or decompose a request into multiple tasks."
+---
+
 # /hv:plan -- Task planning and decomposition
 
 Decomposes complex requests into concrete tasks, manages task CRUD (create, list, view, update, next) via the `hv task` CLI command group.
@@ -13,7 +17,7 @@ Decomposes complex requests into concrete tasks, manages task CRUD (create, list
 
 ### Creating a task
 
-1. **Gather task details.** If the user provides a vague request, invoke `/clarify` to decompose it into concrete tasks with clear titles, priorities, and dependencies.
+1. **Gather task details.** If the user provides a vague request, invoke `/hv:clarify` to decompose it into concrete tasks with clear titles, priorities, and dependencies.
 
 2. **Create the task.** Run:
    ```

@@ -1,3 +1,7 @@
+---
+description: "Initialize Agent Hivemind workspace. Use when setting up hivemind for the first time or linking a new project."
+---
+
 # /hv:init -- Initialize Agent Hivemind workspace
 
 Orchestrates the full initialization of an Agent Hivemind workspace: creates the data directory structure, installs Claude Code integrations (skills, hooks, profiles), and links the current project.
@@ -10,7 +14,7 @@ Orchestrates the full initialization of an Agent Hivemind workspace: creates the
 
 ## Steps
 
-1. **Optionally clarify project requirements.** If the user has not specified a clear project scope, invoke `/clarify` first to gather requirements before proceeding.
+1. **Optionally clarify project requirements.** If the user has not specified a clear project scope, invoke `/hv:clarify` first to gather requirements before proceeding.
 
 2. **Initialize the hivemind data directory.** Run:
    ```

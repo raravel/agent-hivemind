@@ -1,3 +1,7 @@
+---
+description: "Execute tasks through the agent pipeline (coding, testing, code review). Use when the user says 'run task', 'execute task', or wants to start working on the next task."
+---
+
 # /hv:task -- Task execution pipeline
 
 Orchestrates the full task execution pipeline: fetches the next task, runs a sequence of specialized agents (coder, tester, code reviewer), manages status transitions, and records execution reports.
