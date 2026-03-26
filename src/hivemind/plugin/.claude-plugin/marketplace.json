@@ -1,0 +1,13 @@
+{
+  "name": "hv-local",
+  "owner": {
+    "name": "raravel"
+  },
+  "plugins": [
+    {
+      "name": "hv",
+      "source": "./",
+      "description": "Agent Hivemind — harness engineering toolkit for AI coding agents"
+    }
+  ]
+}
