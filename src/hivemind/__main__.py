@@ -9,6 +9,8 @@ import click
 from hivemind.commands.feedback import feedback as _feedback_group
 from hivemind.commands.important import important as _important_group
 from hivemind.commands.init import init_cmd as _init_cmd
+from hivemind.commands.search import index as _index_group
+from hivemind.commands.search import search as _search_cmd
 from hivemind.commands.task import task as _task_group
 
 
@@ -84,13 +86,7 @@ cli.add_command(_feedback_group)
 
 # --- search ---
 
-
-@cli.command()
-@click.argument("query")
-@click.option("--project", "-p", default=None, help="Project to search in.")
-def search(query: str, project: Optional[str]) -> None:
-    """Search the knowledge base."""
-    click.echo("Not implemented yet")
+cli.add_command(_search_cmd)
 
 
 # --- important group ---
@@ -132,16 +128,7 @@ def filter(file: str) -> None:
 
 # --- index group ---
 
-
-@cli.group()
-def index() -> None:
-    """Manage search index."""
-
-
-@index.command()
-def rebuild() -> None:
-    """Rebuild the search index."""
-    click.echo("Not implemented yet")
+cli.add_command(_index_group)
 
 
 # --- config ---
