@@ -1,3 +1,7 @@
+---
+description: "Extract and save session feedback as L2 lessons. Use at the end of a session or when the user wants to record lessons learned."
+---
+
 # /hv:feedback -- Session feedback extraction
 
 Extracts lessons learned from the current conversation or work session and saves them as L2 (Level 2) documents in the hivemind knowledge base. Always confirms with the user before saving.

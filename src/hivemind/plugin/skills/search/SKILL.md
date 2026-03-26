@@ -1,3 +1,7 @@
+---
+description: "Search the knowledge base for relevant lessons. Use when the user asks to search feedback, find lessons, or needs context from past experiences."
+---
+
 # /hv:search -- Knowledge base search
 
 Searches the hivemind knowledge base (L2 documents) using BM25 ranking and loads matching content into context. Reports hit counts and suggests promotions for frequently accessed lessons.

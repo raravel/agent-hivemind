@@ -1,3 +1,7 @@
+---
+description: "Manage important lessons (L1). Promote, demote, or regenerate the important.md file."
+---
+
 # /hv:important -- L1 promote/demote orchestration
 
 Manages the L1 (Level 1) knowledge layer by promoting high-value L2 lessons to `important.md` or demoting them. L1 content is the curated, high-signal knowledge that is always loaded into agent context.

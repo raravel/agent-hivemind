@@ -1,10 +1,14 @@
-# /clarify -- Requirement ambiguity resolution
+---
+description: "This skill MUST be invoked BEFORE any implementation begins when the user gives an implementation or creation request such as 'make X', 'build X', 'create X', 'add X', 'implement X', 'refactor X', or any request that requires writing code, creating documents, or building features. It evaluates requirement ambiguity across 7 axes and asks Socratic questions until all axes score 0.2 or below. This skill applies to requests in any language (Korean, English, etc.)."
+---
+
+# /hv:clarify -- Requirement ambiguity resolution
 
 Evaluates implementation requests across 7 ambiguity axes using Socratic questioning. Iterates until all axes score <= 0.2 before allowing work to begin.
 
 ## When to use
 
-Invoke `/clarify` BEFORE starting any implementation work when the user requests:
+Invoke `/hv:clarify` BEFORE starting any implementation work when the user requests:
 - make, build, create, add, implement, refactor (in any language)
 
 ## Exemptions (do NOT invoke)

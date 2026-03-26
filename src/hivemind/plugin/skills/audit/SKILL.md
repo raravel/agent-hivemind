@@ -1,3 +1,7 @@
+---
+description: "Run a drift scan between code and harness specs. Use when checking for spec-code inconsistencies."
+---
+
 # /hv:audit -- Project drift scan orchestration
 
 Runs a full drift audit for a project, detecting mismatches between code files, harness specs, and task state. Presents findings and offers to fix detected issues.
