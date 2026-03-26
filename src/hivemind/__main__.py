@@ -9,6 +9,7 @@ import click
 from hivemind.commands.feedback import feedback as _feedback_group
 from hivemind.commands.important import important as _important_group
 from hivemind.commands.init import init_cmd as _init_cmd
+from hivemind.commands.task import task as _task_group
 
 
 @click.group()
@@ -35,42 +36,7 @@ def push() -> None:
 
 # --- task group ---
 
-
-@cli.group()
-def task() -> None:
-    """Manage tasks."""
-
-
-@task.command(name="list")
-def task_list() -> None:
-    """List all tasks."""
-    click.echo("Not implemented yet")
-
-
-@task.command()
-@click.argument("task_id")
-def get(task_id: str) -> None:
-    """Get details for a specific task."""
-    click.echo("Not implemented yet")
-
-
-@task.command()
-def create() -> None:
-    """Create a new task."""
-    click.echo("Not implemented yet")
-
-
-@task.command()
-@click.argument("task_id")
-def update(task_id: str) -> None:
-    """Update an existing task."""
-    click.echo("Not implemented yet")
-
-
-@task.command()
-def next() -> None:
-    """Get the next task to work on."""
-    click.echo("Not implemented yet")
+cli.add_command(_task_group)
 
 
 # --- run ---
