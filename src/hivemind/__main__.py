@@ -6,6 +6,7 @@ from typing import Optional
 
 import click
 
+from hivemind.commands.feedback import feedback as _feedback_group
 from hivemind.commands.init import init_cmd as _init_cmd
 
 
@@ -111,16 +112,7 @@ def end() -> None:
 
 # --- feedback group ---
 
-
-@cli.group()
-def feedback() -> None:
-    """Manage feedback."""
-
-
-@feedback.command()
-def save() -> None:
-    """Save feedback."""
-    click.echo("Not implemented yet")
+cli.add_command(_feedback_group)
 
 
 # --- search ---
