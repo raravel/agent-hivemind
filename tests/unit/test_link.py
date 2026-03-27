@@ -213,9 +213,11 @@ class TestLinkProject:
             os.chdir(old_cwd)
 
         content = claude_md.read_text(encoding="utf-8")
-        assert "hv run --project testproj" in content
+        assert "Hivemind Integration" in content
+        assert "/hv:clarify" in content
 
-    def test_no_claude_md_append_if_missing(self, tmp_path: Path) -> None:
+    def test_claude_md_created_if_missing(self, tmp_path: Path) -> None:
+        """hv link now always creates CLAUDE.md with hivemind rules."""
         project_dir, data_path = self._setup_workspace(tmp_path)
         config_path = data_path / ".hivemind.json"
 
@@ -234,8 +236,10 @@ class TestLinkProject:
         finally:
             os.chdir(old_cwd)
 
-        # CLAUDE.md should not have been created
-        assert not (project_dir / "CLAUDE.md").exists()
+        # CLAUDE.md should have been created with hivemind block
+        assert (project_dir / "CLAUDE.md").exists()
+        content = (project_dir / "CLAUDE.md").read_text(encoding="utf-8")
+        assert "/hv:clarify" in content
 
 
 class TestLinkCli:

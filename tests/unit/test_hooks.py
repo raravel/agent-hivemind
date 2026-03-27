@@ -15,6 +15,7 @@ _HOOK_FILE = (
     Path(__file__).resolve().parents[2]
     / "src"
     / "hivemind"
+    / "plugin"
     / "hooks"
     / "hv-pre-commit.js"
 )

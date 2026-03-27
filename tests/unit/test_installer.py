@@ -1,92 +1,130 @@
-"""Unit tests for hivemind.installer (skills, hooks, profiles)."""
+"""Unit tests for hivemind.installer (plugin, hooks, profiles)."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest import mock
 
-import pytest
-
-from hivemind.installer.skills import install_skills
+from hivemind.installer.skills import install_plugin
 from hivemind.installer.hooks import install_hooks
 from hivemind.installer.profiles import install_profiles
 from hivemind.core.config import HivemindConfig, default_config
 
 
 # ---------------------------------------------------------------------------
-# Skills
+# Helpers
 # ---------------------------------------------------------------------------
 
 
-class TestInstallSkills:
-    """Tests for install_skills()."""
+def _make_plugin_source(base: Path, *, skills: list[str] | None = None, hooks: bool = False) -> Path:
+    """Create a minimal plugin directory structure.
 
-    def test_copies_md_files(self, tmp_path: Path) -> None:
-        source = tmp_path / "skills_src"
-        source.mkdir()
-        (source / "a.md").write_text("skill-a", encoding="utf-8")
-        (source / "b.md").write_text("skill-b", encoding="utf-8")
+    Parameters
+    ----------
+    base:
+        Parent directory in which to create the plugin source.
+    skills:
+        List of skill names to create (each gets ``skills/<name>/SKILL.md``).
+    hooks:
+        If True, creates ``hooks/hooks.json`` and ``hooks/hv-pre-commit.js``.
 
-        target = tmp_path / "skills_dst"
-        result = install_skills(source, target)
+    Returns
+    -------
+    Path
+        The plugin source root directory.
+    """
+    src = base / "plugin_src"
+    # .claude-plugin/plugin.json (required for install_plugin to detect the plugin)
+    plugin_meta = src / ".claude-plugin"
+    plugin_meta.mkdir(parents=True)
+    (plugin_meta / "plugin.json").write_text(
+        json.dumps({"name": "hv", "version": "1.0.0"}), encoding="utf-8"
+    )
 
-        assert sorted(result) == ["a.md", "b.md"]
-        assert (target / "a.md").read_text(encoding="utf-8") == "skill-a"
-        assert (target / "b.md").read_text(encoding="utf-8") == "skill-b"
+    if skills:
+        for name in skills:
+            skill_dir = src / "skills" / name
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            (skill_dir / "SKILL.md").write_text(f"# {name}", encoding="utf-8")
 
-    def test_overwrites_existing(self, tmp_path: Path) -> None:
-        source = tmp_path / "skills_src"
-        source.mkdir()
-        (source / "a.md").write_text("v2", encoding="utf-8")
+    if hooks:
+        hooks_dir = src / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        (hooks_dir / "hooks.json").write_text("{}", encoding="utf-8")
+        (hooks_dir / "hv-pre-commit.js").write_text("// hook", encoding="utf-8")
 
-        target = tmp_path / "skills_dst"
-        target.mkdir()
-        (target / "a.md").write_text("v1", encoding="utf-8")
+    return src
 
-        install_skills(source, target)
-        assert (target / "a.md").read_text(encoding="utf-8") == "v2"
 
-    def test_preserves_subdirectory_structure(self, tmp_path: Path) -> None:
-        source = tmp_path / "skills_src"
-        sub = source / "sub"
-        sub.mkdir(parents=True)
-        (sub / "deep.md").write_text("deep", encoding="utf-8")
+# ---------------------------------------------------------------------------
+# Plugin (skills + hooks via install_plugin)
+# ---------------------------------------------------------------------------
 
-        target = tmp_path / "skills_dst"
-        result = install_skills(source, target)
 
-        # On Windows the separator might be backslash; normalise.
-        normalised = [r.replace("\\", "/") for r in result]
-        assert "sub/deep.md" in normalised
-        assert (target / "sub" / "deep.md").exists()
+@mock.patch("hivemind.installer.skills._run_claude_cmd", return_value=(True, "ok"))
+class TestInstallPlugin:
+    """Tests for install_plugin()."""
 
-    def test_ignores_non_md_files(self, tmp_path: Path) -> None:
-        source = tmp_path / "skills_src"
-        source.mkdir()
-        (source / "readme.txt").write_text("ignore", encoding="utf-8")
-        (source / "keep.md").write_text("keep", encoding="utf-8")
+    def test_installs_skills(self, mock_cmd: mock.MagicMock, tmp_path: Path) -> None:
+        source = _make_plugin_source(tmp_path, skills=["audit", "plan"])
+        target = tmp_path / "target_plugin"
 
-        target = tmp_path / "skills_dst"
-        result = install_skills(source, target)
+        result = install_plugin(source, target)
 
-        assert result == ["keep.md"]
-        assert not (target / "readme.txt").exists()
+        assert "/hv:audit" in result
+        assert "/hv:plan" in result
+        assert (target / "skills" / "audit" / "SKILL.md").exists()
+        assert (target / "skills" / "plan" / "SKILL.md").exists()
 
-    def test_creates_target_dir(self, tmp_path: Path) -> None:
-        source = tmp_path / "skills_src"
-        source.mkdir()
-        (source / "a.md").write_text("a", encoding="utf-8")
+    def test_installs_hooks(self, mock_cmd: mock.MagicMock, tmp_path: Path) -> None:
+        source = _make_plugin_source(tmp_path, hooks=True)
+        target = tmp_path / "target_plugin"
 
-        target = tmp_path / "nonexistent" / "nested"
-        install_skills(source, target)
-        assert target.is_dir()
+        result = install_plugin(source, target)
 
-    def test_empty_source_returns_empty(self, tmp_path: Path) -> None:
-        source = tmp_path / "empty"
-        source.mkdir()
-        target = tmp_path / "out"
-        result = install_skills(source, target)
+        assert "hook:hv-pre-commit" in result
+        assert (target / "hooks" / "hooks.json").exists()
+
+    def test_installs_skills_and_hooks(self, mock_cmd: mock.MagicMock, tmp_path: Path) -> None:
+        source = _make_plugin_source(tmp_path, skills=["search"], hooks=True)
+        target = tmp_path / "target_plugin"
+
+        result = install_plugin(source, target)
+
+        assert "/hv:search" in result
+        assert "hook:hv-pre-commit" in result
+
+    def test_overwrites_existing_target(self, mock_cmd: mock.MagicMock, tmp_path: Path) -> None:
+        source = _make_plugin_source(tmp_path, skills=["audit"])
+        target = tmp_path / "target_plugin"
+
+        # First install
+        install_plugin(source, target)
+        # Modify a file to verify overwrite
+        (target / "skills" / "audit" / "SKILL.md").write_text("old", encoding="utf-8")
+
+        # Second install should overwrite
+        install_plugin(source, target)
+        content = (target / "skills" / "audit" / "SKILL.md").read_text(encoding="utf-8")
+        assert content == "# audit"
+
+    def test_empty_plugin_returns_empty(self, mock_cmd: mock.MagicMock, tmp_path: Path) -> None:
+        source = _make_plugin_source(tmp_path)
+        target = tmp_path / "target_plugin"
+
+        result = install_plugin(source, target)
+
         assert result == []
+
+    def test_registers_plugin_with_claude_cli(self, mock_cmd: mock.MagicMock, tmp_path: Path) -> None:
+        source = _make_plugin_source(tmp_path, skills=["audit"])
+        target = tmp_path / "target_plugin"
+
+        install_plugin(source, target)
+
+        # _run_claude_cmd should be called at least twice (marketplace add + plugin install)
+        assert mock_cmd.call_count >= 2
 
 
 # ---------------------------------------------------------------------------
