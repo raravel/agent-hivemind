@@ -6,6 +6,8 @@ AI 코딩 에이전트를 위한 하네스 엔지니어링 툴킷.
 
 > **[English](README.md)** documentation is also available.
 
+![agent-hivemind overview](docs/images/overview.webp)
+
 ## 이게 뭔가요?
 
 AI 코딩 에이전트(Claude Code 등)에게 "투두리스트 만들어줘"라고 하면, 에이전트는 바로 코드를 작성하기 시작합니다. 하지만 결과물은 대개 불완전합니다 — 아키텍처 설계 없이, 라이브러리 조사 없이, 완료 조건 없이 작업하기 때문입니다.
