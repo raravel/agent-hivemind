@@ -71,23 +71,33 @@ graph TD
 ```
 ````
 
-### Phase 2: Task Creation
+### Phase 2: Task Creation (Hierarchical)
 
-After harness documents are written, create tasks. Each task MUST have:
+After harness documents are written, create tasks using a hierarchy: **Epic → Story → Task**.
 
-1. **A clear title** (English, imperative verb: "Implement X", "Add Y", "Set up Z")
-2. **A body with completion criteria** — Write this DIRECTLY into the task .md file after creating it via CLI
-3. **References to harness documents** — Which spec docs the task implementer should read
-
-**Task creation flow:**
+**Create in this order:**
 
 ```bash
-# 1. Create the task via CLI
-hv task create -p <project> -t "<title>" --priority <high|medium|low> --type <task|feature|bug|chore> [--depends <ID>]
+# 1. Create the epic (top-level grouping)
+hv task create -p <project> -t "Add deadlines" --type epic --priority high
+
+# 2. Create stories under the epic
+hv task create -p <project> -t "Backend API" --type story --parent <EPIC-ID> --priority high
+hv task create -p <project> -t "Frontend UI" --type story --parent <EPIC-ID> --depends <STORY1-ID>
+
+# 3. Create tasks under each story
+hv task create -p <project> -t "Create deadline API" --type task --parent <STORY-ID> --priority high
+hv task create -p <project> -t "Update deadline API" --type task --parent <STORY-ID> --depends <PREV-TASK-ID>
 ```
 
+**Hierarchy rules:**
+- `epic`: top-level grouping, no parent
+- `story`: groups related tasks, parent must be an epic
+- `task`/`bug`/`chore`: actual work items, parent must be a story
+
+**After creating each task via CLI, IMMEDIATELY write the body:**
+
 ```bash
-# 2. IMMEDIATELY write the task body with completion criteria
 # Find the task file path from the CLI output, then append content to it
 ```
 

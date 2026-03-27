@@ -14,6 +14,14 @@ VALID_STATUSES: list[str] = [
     "done",
 ]
 
+VALID_TYPES: list[str] = [
+    "epic",
+    "story",
+    "task",
+    "bug",
+    "chore",
+]
+
 REQUIRED_TASK_FIELDS: list[str] = [
     "id",
     "title",
