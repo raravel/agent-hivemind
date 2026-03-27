@@ -6,6 +6,8 @@ Structures and manages all the context an AI agent needs — from project initia
 
 > **[한국어](README_ko.md)** 문서도 제공됩니다.
 
+![agent-hivemind overview](docs/images/overview.webp)
+
 ## What is this?
 
 When you tell an AI coding agent (like Claude Code) to "build me a todo app", it starts writing code immediately. But the result is usually incomplete — no architecture design, no library research, no completion criteria.
