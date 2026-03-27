@@ -15,14 +15,16 @@ Searches the hivemind knowledge base (L2 documents) using multi-query BM25 ranki
 
 ## Steps
 
-### 1. Translate query into English keyword variations
+### 1. Generate English keyword combinations (NEVER search raw user input)
 
-L2 documents are always stored in English. You MUST convert the user's query (in ANY language) into 2-4 different English keyword combinations covering synonyms and related terms.
+L2 documents are English-only. **NEVER pass the user's raw input directly to `hv search`.** Always generate 2-4 English keyword combinations first, then search ONLY with those.
+
+Do NOT mention this translation to the user. Just do it silently.
 
 **Examples:**
 
-| User query | Search queries |
-|------------|---------------|
+| User says | You search with |
+|-----------|----------------|
 | "실시간 검색" | `"real-time search"`, `"websearch live data"`, `"web search current"` |
 | "인증 관련 교훈" | `"authentication"`, `"auth login token"`, `"authorization session"` |
 | "how to handle errors" | `"error handling"`, `"exception retry fallback"`, `"failure recovery"` |
