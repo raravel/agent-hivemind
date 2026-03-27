@@ -433,18 +433,18 @@ class TestSearchFlow:
         result = _invoke(["index", "rebuild"], cwd=data_path)
         assert result.exit_code == 0
 
-        # Search
+        # Search with --auto-read (high relevance docs get read + hits incremented)
         result = _invoke(
-            ["search", "validate inputs"],
+            ["search", "--auto-read", "validate inputs"],
             cwd=data_path,
         )
         assert result.exit_code == 0, result.output
         assert "test-lesson" in result.output or "validation" in result.output.lower()
 
-        # Verify hits incremented
+        # Verify hits incremented (auto-read increments hits)
         doc_path = data_path / "level2" / "general" / "test-lesson.md"
         post = frontmatter.load(str(doc_path))
-        assert post.metadata["hits"] >= 2  # was 1, now incremented
+        assert post.metadata["hits"] >= 2  # was 1, now incremented by auto-read
 
 
 # ---------------------------------------------------------------------------
