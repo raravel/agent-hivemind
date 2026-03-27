@@ -58,7 +58,15 @@ Claude Code에서 프로젝트를 열고 실행:
 /hv:init
 ```
 
-현재 프로젝트를 hivemind에 연결하고, 프로젝트 데이터 디렉토리를 생성하며, CLAUDE.md에 `/hv:clarify` 규칙을 주입합니다. 이후 구현 요청 시 자동으로 요구사항 검증이 실행됩니다.
+현재 프로젝트를 hivemind에 연결하고, 프로젝트 데이터 디렉토리를 생성하며, CLAUDE.md에 프로젝트 정보를 추가합니다:
+
+```markdown
+# Hivemind Project
+- project: my-app
+- data_path: ~/agent-hivemind-data
+```
+
+이것이 전부입니다 — 규칙과 동작은 `/hv:*` 스킬이 알아서 처리합니다.
 
 ### Step 2. 계획 수립 — `/hv:plan`
 

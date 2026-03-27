@@ -58,7 +58,15 @@ Open your project in Claude Code and run:
 /hv:init
 ```
 
-This links the current project to hivemind, creates the project data directories, and injects the `/hv:clarify` rule into your project's CLAUDE.md so that requirement verification triggers automatically on implementation requests.
+This links the current project to hivemind: creates the project data directories and adds the project info to CLAUDE.md. Your CLAUDE.md will contain:
+
+```markdown
+# Hivemind Project
+- project: my-app
+- data_path: ~/agent-hivemind-data
+```
+
+That's all — rules and behaviors are handled by the `/hv:*` skills themselves.
 
 ### Step 2. Plan the project — `/hv:plan`
 
