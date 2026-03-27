@@ -79,7 +79,7 @@ def _read_doc_content(data_path: Path, doc_rel_path: str) -> str:
     return str(post.content)
 
 
-PROMOTION_THRESHOLD = 3
+PROMOTION_THRESHOLD = 10
 
 
 def _ensure_index(data_path: Path) -> dict[str, list[dict[str, object]]]:
