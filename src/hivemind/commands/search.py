@@ -8,6 +8,7 @@ import click
 import frontmatter
 
 from hivemind.core.config import HivemindConfig
+from hivemind.core.git import auto_commit
 from hivemind.core.indexer import (
     build_index,
     load_index,
@@ -194,6 +195,7 @@ def search(query: str, project: str | None, auto_read: bool) -> None:
     if auto_read_docs:
         updated_index = build_index(data_path)
         save_index(updated_index, data_path / "index.json")
+        auto_commit(data_path, "search: auto-read")
 
 
 @click.command("read")
@@ -232,6 +234,8 @@ def search_read(doc_path: str) -> None:
     # Update index
     updated_index = build_index(data_path)
     save_index(updated_index, data_path / "index.json")
+
+    auto_commit(data_path, f"search: read {doc_path}")
 
 
 @click.group()

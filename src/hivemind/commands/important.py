@@ -10,6 +10,7 @@ import click
 import frontmatter
 
 from hivemind.core.config import HivemindConfig
+from hivemind.core.git import auto_commit
 from hivemind.core.indexer import build_index, search
 
 
@@ -128,6 +129,8 @@ def promote(path: str) -> None:
     important_path = generate_important_md(data_path)
     click.echo(f"Generated: {important_path}")
 
+    auto_commit(data_path, f"important: promote {path}")
+
 
 @important.command()
 @click.argument("query")
@@ -180,6 +183,8 @@ def demote(query: str, yes: bool) -> None:
     important_path = generate_important_md(data_path)
     click.echo(f"Generated: {important_path}")
 
+    auto_commit(data_path, "important: demote")
+
 
 @important.command()
 def generate() -> None:
@@ -190,3 +195,5 @@ def generate() -> None:
     count = post.metadata.get("count", 0)
     click.echo(f"Generated: {important_path}")
     click.echo(f"Promoted lessons: {count}")
+
+    auto_commit(data_path, "important: regenerate")

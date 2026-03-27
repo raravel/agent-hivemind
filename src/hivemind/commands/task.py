@@ -10,6 +10,7 @@ from typing import Any
 import click
 
 from hivemind.core.config import HivemindConfig
+from hivemind.core.git import auto_commit
 from hivemind.core.parser import create_task_file, parse_task, update_frontmatter, validate_status
 
 PRIORITY_ORDER: dict[str, int] = {"high": 3, "medium": 2, "low": 1}
@@ -134,6 +135,8 @@ def create(
     cfg.set(f"projects.{project}.counter", counter)
     cfg.save()
 
+    auto_commit(data_path, f"task: create {task_id}")
+
     click.echo(f"Created task: {task_id}")
     click.echo(f"  Title: {title}")
     click.echo(f"  File:  {task_path}")
@@ -234,6 +237,8 @@ def update(
 
     updates["updated"] = date.today().isoformat()
     update_frontmatter(task_path, updates)
+
+    auto_commit(data_path, f"task: update {task_id}")
 
     click.echo(f"Updated task: {task_id}")
     for key, value in updates.items():

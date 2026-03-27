@@ -9,6 +9,7 @@ from pathlib import Path
 import click
 
 from hivemind.core.config import HivemindConfig
+from hivemind.core.git import auto_commit
 
 
 def _detect_name(name: str | None, project_dir: Path) -> str:
@@ -151,6 +152,8 @@ def link_project(
             existing_content + import_block, encoding="utf-8"
         )
         click.echo("Appended hivemind integration to CLAUDE.md.")
+
+    auto_commit(data_path, f"link: {resolved_name}")
 
     return resolved_name
 

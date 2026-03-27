@@ -12,6 +12,7 @@ import click
 import frontmatter
 
 from hivemind.core.config import HivemindConfig
+from hivemind.core.git import auto_commit
 from hivemind.core.indexer import build_index, save_index
 from hivemind.core.similarity import find_similar
 
@@ -248,5 +249,5 @@ def save(project: str, content_file: str | None, title: str | None) -> None:
     save_index(index_data, index_path)
     click.echo("Index updated.")
 
-    # 6. Auto-commit placeholder
-    click.echo("[git] Auto-commit skipped (not yet implemented).")
+    # 6. Auto-commit
+    auto_commit(data_path, f"feedback: {title}")
