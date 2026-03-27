@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from unittest import mock
@@ -16,6 +17,35 @@ from hivemind.commands.init import (
     run_installers,
 )
 from hivemind.core.config import HivemindConfig
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_plugin_source(base: Path, *, skills: list[str] | None = None, hooks: bool = False) -> Path:
+    """Create a minimal plugin directory structure for testing."""
+    src = base / "plugin_src"
+    plugin_meta = src / ".claude-plugin"
+    plugin_meta.mkdir(parents=True)
+    (plugin_meta / "plugin.json").write_text(
+        json.dumps({"name": "hv", "version": "1.0.0"}), encoding="utf-8"
+    )
+
+    if skills:
+        for name in skills:
+            skill_dir = src / "skills" / name
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            (skill_dir / "SKILL.md").write_text(f"# {name}", encoding="utf-8")
+
+    if hooks:
+        hooks_dir = src / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        (hooks_dir / "hooks.json").write_text("{}", encoding="utf-8")
+        (hooks_dir / "hv-pre-commit.js").write_text("// hook", encoding="utf-8")
+
+    return src
 
 
 # ---------------------------------------------------------------------------
@@ -57,83 +87,61 @@ class TestRunInstallers:
         init_data_dir(data)
         return data
 
+    @mock.patch("hivemind.installer.skills._run_claude_cmd", return_value=(True, "ok"))
     def test_skills_installed_when_source_exists(
-        self, tmp_path: Path
+        self, mock_cmd: mock.MagicMock, tmp_path: Path
     ) -> None:
         data = self._make_data_dir(tmp_path)
-        skills_src = tmp_path / "skills_src"
-        skills_src.mkdir()
-        (skills_src / "test.md").write_text("# test", encoding="utf-8")
-
-        hooks_src = tmp_path / "hooks_src"
-        hooks_src.mkdir()
+        plugin_src = _make_plugin_source(tmp_path, skills=["test"])
 
         summary = run_installers(
             data / ".hivemind.json",
-            skills_source=skills_src,
-            hooks_source=hooks_src,
+            skills_source=plugin_src,
         )
 
         assert summary["skills_skipped"] is False
         assert isinstance(summary["skills"], list)
-        assert "test.md" in summary["skills"]
+        assert "/hv:test" in summary["skills"]
 
     def test_skills_skipped_when_source_missing(
         self, tmp_path: Path
     ) -> None:
         data = self._make_data_dir(tmp_path)
-        hooks_src = tmp_path / "hooks_src"
-        hooks_src.mkdir()
 
         summary = run_installers(
             data / ".hivemind.json",
             skills_source=tmp_path / "nonexistent",
-            hooks_source=hooks_src,
         )
 
         assert summary["skills_skipped"] is True
         assert summary["skills"] == []
 
-    def test_hooks_installed(self, tmp_path: Path) -> None:
+    @mock.patch("hivemind.installer.skills._run_claude_cmd", return_value=(True, "ok"))
+    def test_hooks_installed_via_plugin(self, mock_cmd: mock.MagicMock, tmp_path: Path) -> None:
         data = self._make_data_dir(tmp_path)
-        skills_src = tmp_path / "skills_src"
-        skills_src.mkdir()
+        plugin_src = _make_plugin_source(tmp_path, hooks=True)
 
-        hooks_src = tmp_path / "hooks_src"
-        hooks_src.mkdir()
-        (hooks_src / "hv-pre-commit.js").write_text(
-            "// hook", encoding="utf-8"
+        summary = run_installers(
+            data / ".hivemind.json",
+            skills_source=plugin_src,
         )
 
-        # Use a custom settings path so we don't touch the real one.
-        settings = tmp_path / "claude" / "settings.json"
-        with mock.patch(
-            "hivemind.installer.hooks._SETTINGS_DEFAULT", settings
-        ):
-            summary = run_installers(
-                data / ".hivemind.json",
-                skills_source=skills_src,
-                hooks_source=hooks_src,
-            )
+        assert isinstance(summary["skills"], list)
+        assert "hook:hv-pre-commit" in summary["skills"]
 
-        assert summary["hooks"] is True
-
-    def test_profiles_installed(self, tmp_path: Path) -> None:
+    @mock.patch("hivemind.installer.skills._run_claude_cmd", return_value=(True, "ok"))
+    def test_profiles_installed(self, mock_cmd: mock.MagicMock, tmp_path: Path) -> None:
         data = self._make_data_dir(tmp_path)
         # Remove profiles to trigger installation
         cfg = HivemindConfig.load(data / ".hivemind.json")
         cfg.set("profiles", {})
         cfg.save()
 
-        hooks_src = tmp_path / "hooks_src"
-        hooks_src.mkdir()
-        skills_src = tmp_path / "skills_src"
-        skills_src.mkdir()
+        plugin_src = _make_plugin_source(tmp_path)
 
         summary = run_installers(
             data / ".hivemind.json",
-            skills_source=skills_src,
-            hooks_source=hooks_src,
+            skills_source=plugin_src,
         )
 
         assert summary["profiles"] is True
@@ -193,19 +201,16 @@ class TestInitCmdCLI:
         self, tmp_path: Path
     ) -> None:
         data = tmp_path / "hv-data"
-        skills_src = tmp_path / "skills_src"
-        skills_src.mkdir()
-
-        hooks_src = tmp_path / "hooks_src"
-        hooks_src.mkdir()
+        plugin_src = _make_plugin_source(tmp_path)
 
         runner = CliRunner()
         with (
             mock.patch(
-                "hivemind.commands.init._SKILLS_DIR", skills_src
+                "hivemind.commands.init._PLUGIN_DIR", plugin_src
             ),
             mock.patch(
-                "hivemind.commands.init._HOOKS_DIR", hooks_src
+                "hivemind.installer.skills._run_claude_cmd",
+                return_value=(True, "ok"),
             ),
         ):
             result = runner.invoke(init_cmd, ["--path", str(data)])
@@ -217,18 +222,16 @@ class TestInitCmdCLI:
 
     def test_init_with_git_flag(self, tmp_path: Path) -> None:
         data = tmp_path / "hv-data"
-        skills_src = tmp_path / "skills_src"
-        skills_src.mkdir()
-        hooks_src = tmp_path / "hooks_src"
-        hooks_src.mkdir()
+        plugin_src = _make_plugin_source(tmp_path)
 
         runner = CliRunner()
         with (
             mock.patch(
-                "hivemind.commands.init._SKILLS_DIR", skills_src
+                "hivemind.commands.init._PLUGIN_DIR", plugin_src
             ),
             mock.patch(
-                "hivemind.commands.init._HOOKS_DIR", hooks_src
+                "hivemind.installer.skills._run_claude_cmd",
+                return_value=(True, "ok"),
             ),
             mock.patch(
                 "hivemind.commands.init._init_git", return_value=True
@@ -244,18 +247,16 @@ class TestInitCmdCLI:
 
     def test_init_without_git_flag(self, tmp_path: Path) -> None:
         data = tmp_path / "hv-data"
-        skills_src = tmp_path / "skills_src"
-        skills_src.mkdir()
-        hooks_src = tmp_path / "hooks_src"
-        hooks_src.mkdir()
+        plugin_src = _make_plugin_source(tmp_path)
 
         runner = CliRunner()
         with (
             mock.patch(
-                "hivemind.commands.init._SKILLS_DIR", skills_src
+                "hivemind.commands.init._PLUGIN_DIR", plugin_src
             ),
             mock.patch(
-                "hivemind.commands.init._HOOKS_DIR", hooks_src
+                "hivemind.installer.skills._run_claude_cmd",
+                return_value=(True, "ok"),
             ),
         ):
             result = runner.invoke(init_cmd, ["--path", str(data)])
@@ -267,18 +268,11 @@ class TestInitCmdCLI:
         self, tmp_path: Path
     ) -> None:
         data = tmp_path / "hv-data"
-        hooks_src = tmp_path / "hooks_src"
-        hooks_src.mkdir()
 
         runner = CliRunner()
-        with (
-            mock.patch(
-                "hivemind.commands.init._SKILLS_DIR",
-                tmp_path / "nonexistent",
-            ),
-            mock.patch(
-                "hivemind.commands.init._HOOKS_DIR", hooks_src
-            ),
+        with mock.patch(
+            "hivemind.commands.init._PLUGIN_DIR",
+            tmp_path / "nonexistent",
         ):
             result = runner.invoke(init_cmd, ["--path", str(data)])
 
