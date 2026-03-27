@@ -38,8 +38,17 @@ hv search --auto-read "websearch real-time"
 
 Output automatically includes full content of high-relevance docs.
 
+## Available commands
+
+```
+hv search --auto-read "<query>"   # Search + auto-read >= 70% docs
+hv search-read "<path>"           # Read a specific doc + increment hits (use for 30-69% docs user confirmed)
+hv index rebuild                  # Rebuild search index
+```
+
 ## Rules
 
 - NEVER search with raw user input. English keywords only. Silently.
-- ALWAYS use `--auto-read` flag.
-- NEVER use nonexistent commands. Only: `hv search`, `hv search-read`, `hv index rebuild`.
+- ALWAYS use `--auto-read` flag when searching.
+- Use `hv search-read "<path>"` to read 30-69% docs that the user confirms.
+- NEVER use nonexistent commands. Only the 3 above.
