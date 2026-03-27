@@ -2,30 +2,37 @@
 description: "Initialize Agent Hivemind workspace. Use when setting up hivemind for the first time or linking a new project."
 ---
 
-# /hv:init -- Initialize Agent Hivemind workspace
+# /hv:init -- Initialize and link a project
+
+Sets up the hivemind data directory (if needed) and links the current project.
 
 ## Execution
 
-Run:
+**Step 1.** Ensure hivemind is initialized:
 
 ```bash
 hv init
 ```
 
-This single command does everything:
-1. Creates `~/agent-hivemind-data/` with all required directories
-2. Installs the Claude Code plugin (skills, hooks, profiles)
-3. Links the current project (creates `.hivemind-link.json`, registers in config)
-4. Sets up CLAUDE.md with `/hv:clarify` mandatory rule
+This is idempotent — safe to run multiple times. Creates the data directory and installs the plugin if not already done.
 
-If the user wants git tracking: `hv init --git`
-If the user wants a custom path: `hv init --path /custom/path`
+**Step 2.** Link the current project:
 
-After init, report what was created and suggest next steps:
+```bash
+hv link
+```
+
+This:
+- Creates `.hivemind-link.json` in the project root
+- Creates `projects/{name}/`, `tasks/{name}/`, `level3/{name}/` in the data directory
+- Registers the project in `.hivemind.json`
+- Sets up CLAUDE.md with the mandatory `/hv:clarify` rule
+
+**Step 3.** Report what was done and suggest next steps:
 - "Run `/hv:plan` to plan your project"
 
 ## Rules
 
-- ALWAYS use Bash tool to run `hv init`.
-- If data directory already exists, `hv init` is idempotent.
-- Do NOT run `hv link` separately — `hv init` handles it automatically.
+- ALWAYS run both `hv init` and `hv link` in sequence.
+- ALWAYS use Bash tool for `hv` commands.
+- If already linked (`.hivemind-link.json` exists), `hv link` will skip automatically.

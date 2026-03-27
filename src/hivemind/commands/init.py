@@ -223,17 +223,4 @@ def init_cmd(path: str | None, *, use_git: bool) -> None:
         else:
             click.echo("Git initialization failed.")
 
-    # --- Auto-link current project -------------------------------------------
-    cwd = Path.cwd()
-    link_file = cwd / ".hivemind-link.json"
-    if not link_file.exists():
-        click.echo("")
-        click.echo(f"Linking current project: {cwd.name}")
-        try:
-            from hivemind.commands.link import link_project
-
-            link_project(cwd)
-        except Exception as e:  # noqa: BLE001
-            click.echo(f"Auto-link skipped: {e}")
-
     click.echo("\nDone.")
