@@ -97,11 +97,18 @@ def _ensure_index(data_path: Path) -> dict[str, list[dict[str, object]]]:
 @click.command()
 @click.argument("query")
 @click.option("--project", "-p", default=None, help="Project to search in.")
-def search(query: str, project: str | None) -> None:
-    """Search the knowledge base (does NOT increment hits).
+@click.option(
+    "--auto-read", is_flag=True, default=False,
+    help="Auto-read documents with >= 70%% relevance (increments hits).",
+)
+def search(query: str, project: str | None, auto_read: bool) -> None:
+    """Search the knowledge base.
 
-    Returns results with relevance percentage. Use `hv search read <path>`
-    to read a document and increment its hit counter.
+    With --auto-read: documents >= 70%% relevance are read immediately
+    (content printed, hits incremented). Documents 30-69%% are listed
+    for manual review. Documents < 30%% are hidden.
+
+    Without --auto-read: all results are listed with relevance %%.
     """
     data_path = _resolve_data_path()
     index_data = _ensure_index(data_path)
@@ -117,19 +124,76 @@ def search(query: str, project: str | None) -> None:
     if max_score <= 0:
         max_score = 1.0
 
-    # Print results table — NO hits increment
-    click.echo(
-        f"{'Relevance':<12} {'Score':<10} {'Path':<50} {'Title':<30} {'Hits':<5}"
-    )
-    click.echo("-" * 107)
+    if not auto_read:
+        # Simple mode: just list results
+        click.echo(
+            f"{'Relevance':<12} {'Score':<10} {'Path':<50} {'Title':<30} {'Hits':<5}"
+        )
+        click.echo("-" * 107)
+        for doc_path, score in results:
+            relevance = (score / max_score) * 100
+            title = _get_doc_title(data_path, doc_path)
+            hits = _get_doc_hits(data_path, doc_path)
+            click.echo(
+                f"{relevance:>6.0f}%      {score:<10.4f}"
+                f" {doc_path:<50} {title:<30} {hits:<5}"
+            )
+        return
+
+    # Auto-read mode: >= 70% read immediately, 30-69% list, < 30% hide
+    auto_read_docs: list[tuple[str, float, float]] = []
+    maybe_docs: list[tuple[str, float, float]] = []
+
     for doc_path, score in results:
         relevance = (score / max_score) * 100
+        if relevance >= 70:
+            auto_read_docs.append((doc_path, score, relevance))
+        elif relevance >= 30:
+            maybe_docs.append((doc_path, score, relevance))
+
+    # Auto-read high relevance docs
+    for doc_path, score, relevance in auto_read_docs:
         title = _get_doc_title(data_path, doc_path)
-        hits = _get_doc_hits(data_path, doc_path)
+        new_hits = _increment_hits(data_path, doc_path)
+        content = _read_doc_content(data_path, doc_path)
+
+        click.echo(f"=== AUTO-READ ({relevance:.0f}%) ===")
+        click.echo(f"# {title}")
+        click.echo(f"Path: {doc_path}")
+        click.echo(f"Hits: {new_hits}")
+        click.echo("")
+        click.echo(content)
+        click.echo("")
+
+        if new_hits >= PROMOTION_THRESHOLD and not _is_promoted(
+            data_path, doc_path
+        ):
+            click.echo(
+                f"PROMOTE: {doc_path} has {new_hits} hits. "
+                f"Run `hv important promote {doc_path}` to promote to L1."
+            )
+            click.echo("")
+
+    # List maybe docs
+    if maybe_docs:
+        click.echo("=== MAYBE RELEVANT (30-69%) ===")
+        for doc_path, score, relevance in maybe_docs:
+            title = _get_doc_title(data_path, doc_path)
+            hits = _get_doc_hits(data_path, doc_path)
+            click.echo(
+                f"  {relevance:>3.0f}%  {title}  ({doc_path})  hits={hits}"
+            )
         click.echo(
-            f"{relevance:>6.0f}%      {score:<10.4f}"
-            f" {doc_path:<50} {title:<30} {hits:<5}"
+            "Use `hv search-read <path>` to read any of these."
         )
+
+    if not auto_read_docs and not maybe_docs:
+        click.echo("No relevant results found (all below 30%).")
+
+    # Update index
+    if auto_read_docs:
+        updated_index = build_index(data_path)
+        save_index(updated_index, data_path / "index.json")
 
 
 @click.command("read")

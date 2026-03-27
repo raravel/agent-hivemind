@@ -4,60 +4,42 @@ description: "Search the knowledge base for relevant lessons. Use when the user 
 
 # /hv:search -- Knowledge base search
 
-## Available commands
+## Execution
 
-```
-hv search "<query>"                    # Search (no hits increment)
-hv search-read "<path>"                # Read + increment hits
-hv index rebuild                       # Rebuild index
-```
+**Step 1.** Convert user input to 2-3 English keyword combinations. NEVER use raw user input. Do this silently.
 
-## Execution flow
+**Step 2.** Run search with `--auto-read` for each combination:
 
-When this skill is invoked, execute these steps IN ORDER without stopping between them:
-
-**Step 1.** Convert user input to 2-3 English keyword combinations. NEVER use the raw user input.
-
-**Step 2.** Run `hv search` for each combination:
 ```bash
-hv search "english keywords 1"
-hv search "english keywords 2"
+hv search --auto-read "english keywords 1"
+hv search --auto-read "english keywords 2"
 ```
 
-**Step 3.** For EVERY result with relevance >= 70%, IMMEDIATELY run:
+The `--auto-read` flag makes the CLI automatically:
+- **>= 70% relevance**: Print full document content + increment hits
+- **30-69%**: List title and path (you ask user if they want to read)
+- **< 30%**: Hidden
+
+**Step 3.** If any 30-69% docs were listed, ask the user. If confirmed:
 ```bash
-hv search-read "<path from results>"
+hv search-read "<path>"
 ```
-Do this right away. Do not present a table. Do not ask. Do not summarize first. Just run the command.
 
-**Step 4.** For results 30-69%, ask the user if they want to read it.
+**Step 4.** If ALL searches return nothing: `hv index rebuild`, then retry.
 
-**Step 5.** Present a summary of what was read.
-
-## Example (correct)
+## Example
 
 User: "웹 검색"
 
 ```bash
-hv search "web search"           # Step 2
-hv search "websearch real-time"  # Step 2
-# Results show 100% relevance for a document
-hv search-read "level2\general\use-websearch-proactively.md"  # Step 3 — IMMEDIATE
+hv search --auto-read "web search"
+hv search --auto-read "websearch real-time"
 ```
 
-Then present the content to the user.
-
-## Example (WRONG — do not do this)
-
-```bash
-hv search "웹 검색"              # WRONG: raw Korean input
-hv search "web search"
-# Shows table, asks "read it?" # WRONG: 100% should auto-read
-```
+Output automatically includes full content of high-relevance docs.
 
 ## Rules
 
-- NEVER search with raw user input. English keywords only.
-- NEVER stop after search to show a table if any result is >= 70%. Read it first, present after.
-- NEVER use nonexistent commands. Only the 3 listed above.
-- NEVER read L2 files with the Read tool. Use `hv search-read` only.
+- NEVER search with raw user input. English keywords only. Silently.
+- ALWAYS use `--auto-read` flag.
+- NEVER use nonexistent commands. Only: `hv search`, `hv search-read`, `hv index rebuild`.
