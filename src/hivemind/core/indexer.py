@@ -11,8 +11,38 @@ from rank_bm25 import BM25Okapi
 
 
 def _tokenize(text: str) -> list[str]:
-    """Simple whitespace tokenizer with lowercasing."""
-    return text.lower().split()
+    """Tokenizer: lowercasing + punctuation strip + compound word splitting.
+
+    'WebSearch' → ['websearch', 'web', 'search']
+    'real-time' → ['real-time', 'real', 'time']
+    'test_case' → ['test_case', 'test', 'case']
+    'don't'     → ["don't"]
+    """
+    import re
+
+    words = re.findall(r"\S+", text)
+    tokens: list[str] = []
+    for word in words:
+        clean = word.strip(".,;:!?()[]{}\"'`")
+        if not clean:
+            continue
+
+        low = clean.lower()
+        tokens.append(low)
+
+        # camelCase split — only if word actually has uppercase letters
+        if re.search(r"[A-Z]", clean):
+            camel_parts = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)", clean)
+            if len(camel_parts) > 1:
+                tokens.extend(p.lower() for p in camel_parts)
+
+        # hyphen/underscore split (not apostrophes)
+        if "-" in low or "_" in low:
+            parts = re.split(r"[-_]", low)
+            if len(parts) > 1:
+                tokens.extend(p for p in parts if p)
+
+    return tokens
 
 
 def build_index(data_path: Path) -> dict[str, Any]:
