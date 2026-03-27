@@ -1,4 +1,4 @@
-"""Implementation of `hv search` and `hv index` command groups."""
+"""Implementation of `hv search`, `hv search read`, and `hv index` commands."""
 
 from __future__ import annotations
 
@@ -72,72 +72,102 @@ def _is_promoted(data_path: Path, doc_rel_path: str) -> bool:
     return post.metadata.get("promoted") is True
 
 
+def _read_doc_content(data_path: Path, doc_rel_path: str) -> str:
+    """Read the full body content of an L2 document."""
+    doc_path = data_path / doc_rel_path
+    post = frontmatter.load(str(doc_path))
+    return str(post.content)
+
+
 PROMOTION_THRESHOLD = 3
+
+
+def _ensure_index(data_path: Path) -> dict[str, list[dict[str, object]]]:
+    """Load or build the BM25 index."""
+    index_path = data_path / "index.json"
+    if index_path.exists():
+        index_data = load_index(index_path)
+        if index_data.get("docs"):
+            return index_data
+    index_data = build_index(data_path)
+    save_index(index_data, index_path)
+    return index_data
 
 
 @click.command()
 @click.argument("query")
 @click.option("--project", "-p", default=None, help="Project to search in.")
 def search(query: str, project: str | None) -> None:
-    """Search the knowledge base."""
+    """Search the knowledge base (does NOT increment hits).
+
+    Returns results with relevance percentage. Use `hv search read <path>`
+    to read a document and increment its hit counter.
+    """
     data_path = _resolve_data_path()
-    index_path = data_path / "index.json"
+    index_data = _ensure_index(data_path)
 
-    # Build or load index
-    if index_path.exists():
-        index_data = load_index(index_path)
-        if not index_data.get("docs"):
-            index_data = build_index(data_path)
-            save_index(index_data, index_path)
-    else:
-        index_data = build_index(data_path)
-        save_index(index_data, index_path)
-
-    results = bm25_search(query, index_data, top_k=5)
+    results = bm25_search(query, index_data, top_k=10)
 
     if not results:
         click.echo("No results found.")
         return
 
-    # Increment hits and collect display data
-    rows: list[tuple[float, str, str, int]] = []
-    promotion_suggestions: list[str] = []
+    # Compute relevance as percentage of max score
+    max_score = results[0][1] if results else 1.0
+    if max_score <= 0:
+        max_score = 1.0
 
+    # Print results table — NO hits increment
+    click.echo(
+        f"{'Relevance':<12} {'Score':<10} {'Path':<50} {'Title':<30} {'Hits':<5}"
+    )
+    click.echo("-" * 107)
     for doc_path, score in results:
-        new_hits = _increment_hits(data_path, doc_path)
+        relevance = (score / max_score) * 100
         title = _get_doc_title(data_path, doc_path)
-        rows.append((score, doc_path, title, new_hits))
+        hits = _get_doc_hits(data_path, doc_path)
+        click.echo(
+            f"{relevance:>6.0f}%      {score:<10.4f}"
+            f" {doc_path:<50} {title:<30} {hits:<5}"
+        )
 
-        if new_hits >= PROMOTION_THRESHOLD and not _is_promoted(
-            data_path, doc_path
-        ):
-            promotion_suggestions.append(
-                f"  Promote candidate: {doc_path} "
-                f"(hits={new_hits}, title={title})"
-            )
 
-    # Print results table
-    click.echo(f"{'Score':<10} {'Path':<40} {'Title':<30} {'Hits':<5}")
-    click.echo("-" * 85)
-    for score, path, title, hits in rows:
-        click.echo(f"{score:<10.2f} {path:<40} {title:<30} {hits:<5}")
+@click.command("read")
+@click.argument("doc_path")
+def search_read(doc_path: str) -> None:
+    """Read an L2 document and increment its hit counter.
 
-    # Print promotion suggestions
-    if promotion_suggestions:
+    DOC_PATH is the relative path to the document (from search results).
+    """
+    data_path = _resolve_data_path()
+    full_path = data_path / doc_path
+
+    if not full_path.exists():
+        click.echo(f"Document not found: {full_path}")
+        raise SystemExit(1)
+
+    # Increment hits
+    new_hits = _increment_hits(data_path, doc_path)
+    title = _get_doc_title(data_path, doc_path)
+
+    # Print content
+    content = _read_doc_content(data_path, doc_path)
+    click.echo(f"# {title}")
+    click.echo(f"Hits: {new_hits}")
+    click.echo("")
+    click.echo(content)
+
+    # Check promotion
+    if new_hits >= PROMOTION_THRESHOLD and not _is_promoted(data_path, doc_path):
         click.echo("")
         click.echo(
-            "Promotion suggestion: the following docs have "
-            f">= {PROMOTION_THRESHOLD} hits and are not yet promoted:"
-        )
-        for suggestion in promotion_suggestions:
-            click.echo(suggestion)
-        click.echo(
-            "Run `hv important promote <path>` to promote them to L1."
+            f"Promotion suggested: {doc_path} has {new_hits} hits. "
+            f"Run `hv important promote {doc_path}` to promote to L1."
         )
 
-    # Update index after hit changes
+    # Update index
     updated_index = build_index(data_path)
-    save_index(updated_index, index_path)
+    save_index(updated_index, data_path / "index.json")
 
 
 @click.group()
