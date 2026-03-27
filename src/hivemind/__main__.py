@@ -13,6 +13,7 @@ from hivemind.commands.link import link_cmd as _link_cmd
 from hivemind.commands.run import run as _run_cmd
 from hivemind.commands.search import index as _index_group
 from hivemind.commands.search import search as _search_cmd
+from hivemind.commands.search import search_read as _search_read_cmd
 from hivemind.commands.stats import stats as _stats_cmd
 from hivemind.commands.task import task as _task_group
 
@@ -78,6 +79,7 @@ cli.add_command(_feedback_group)
 # --- search ---
 
 cli.add_command(_search_cmd)
+cli.add_command(_search_read_cmd, "search-read")
 
 
 # --- important group ---
