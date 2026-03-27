@@ -10,13 +10,27 @@ id: PRJ-001
 title: "Implement user authentication"
 status: pending          # pending | in_progress | done | blocked | cancelled
 priority: high           # high | medium | low
-type: feature            # task | bug | feature | chore
+type: task               # epic | story | task | bug | chore
+parent: PRJ-000          # parent task ID (optional)
 depends_on:              # list of task IDs this depends on
   - PRJ-000
 created: 2025-01-15
 updated: 2025-01-15
 ---
 ```
+
+## Hierarchy
+
+| Type | Role | Parent | Children |
+|------|------|--------|----------|
+| `epic` | Top-level grouping | None | story |
+| `story` | Groups related work | epic | task/bug/chore |
+| `task` | Actual work item | story | None |
+| `bug` | Bug fix | story | None |
+| `chore` | Maintenance | story | None |
+
+When all tasks in a story are done, the story auto-completes.
+When all stories in an epic are done, the epic auto-completes.
 
 ## Required Body
 
