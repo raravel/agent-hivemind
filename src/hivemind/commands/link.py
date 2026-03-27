@@ -123,35 +123,23 @@ def link_project(
         f"Registered project '{resolved_name}' (prefix={prefix}) in config."
     )
 
-    # 8. Append hivemind block to CLAUDE.md (create if needed)
+    # 8. Append hivemind project info to CLAUDE.md (create if needed)
     claude_md = project_dir / "CLAUDE.md"
     existing_content = ""
     if claude_md.exists():
         existing_content = claude_md.read_text(encoding="utf-8")
 
-    hivemind_marker = "# Hivemind Integration"
+    hivemind_marker = "# Hivemind Project"
     if hivemind_marker not in existing_content:
         import_block = (
             f"\n\n{hivemind_marker}\n"
-            f"# Project: {resolved_name}\n"
-            f"\n"
-            f"## Requirement Clarification (MANDATORY)\n"
-            f"When receiving any implementation/creation request "
-            f"(make, build, create, add, implement, refactor — in any language), "
-            f"ALWAYS invoke the `/hv:clarify` skill BEFORE starting any work. "
-            f"Do NOT begin coding, planning, or documentation until all 7 ambiguity "
-            f"axes score <= 0.2. This rule has NO exceptions.\n"
-            f"\n"
-            f"Exemptions (do NOT invoke `/hv:clarify`):\n"
-            f"- Information queries (explain, search, find, tell me)\n"
-            f"- Reading/searching existing code\n"
-            f"- Tasks with existing spec documents\n"
-            f"- Bug fixes with explicit cause and scope\n"
+            f"- project: {resolved_name}\n"
+            f"- data_path: {data_path}\n"
         )
         claude_md.write_text(
             existing_content + import_block, encoding="utf-8"
         )
-        click.echo("Appended hivemind integration to CLAUDE.md.")
+        click.echo("Appended hivemind project info to CLAUDE.md.")
 
     auto_commit(data_path, f"link: {resolved_name}")
 
