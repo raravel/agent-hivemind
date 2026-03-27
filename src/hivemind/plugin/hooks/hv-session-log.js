@@ -32,11 +32,18 @@ function main() {
   const sessionId = input.session_id || "unknown";
   const event = input.hook_event_name;
 
-  // Debug: log to temp file to confirm hook is firing
+  // Debug: dump full input keys and values to diagnose
   try {
+    const debugPath = path.join(require("os").tmpdir(), "hv-hook-debug.log");
+    const keys = Object.keys(input);
+    const debugInfo = keys.map(k => {
+      const v = input[k];
+      const preview = typeof v === "string" ? v.slice(0, 200) : JSON.stringify(v).slice(0, 200);
+      return `  ${k}: ${preview}`;
+    }).join("\n");
     fs.appendFileSync(
-      path.join(require("os").tmpdir(), "hv-hook-debug.log"),
-      `${new Date().toISOString()} event=${event} cwd=${cwd}\n`,
+      debugPath,
+      `${new Date().toISOString()} event=${event}\n${debugInfo}\n\n`,
       "utf-8"
     );
   } catch { /* ignore */ }
@@ -86,55 +93,18 @@ function main() {
   }
 
   if (event === "UserPromptSubmit") {
-    // Log user input
-    const userPrompt = input.user_prompt || "";
+    const userPrompt = input.prompt || "";
     if (userPrompt.trim()) {
       const timestamp = new Date().toISOString().slice(11, 19);
       const entry = `## User [${timestamp}]\n\n${userPrompt.trim()}\n\n`;
       fs.appendFileSync(logFile, entry, "utf-8");
     }
   } else if (event === "Stop") {
-    // Read transcript to get last assistant message
-    const transcriptPath = input.transcript_path;
-    if (transcriptPath && fs.existsSync(transcriptPath)) {
-      try {
-        const lines = fs
-          .readFileSync(transcriptPath, "utf-8")
-          .trim()
-          .split("\n");
-
-        // Walk backwards to find last assistant message
-        for (let i = lines.length - 1; i >= 0; i--) {
-          let msg;
-          try {
-            msg = JSON.parse(lines[i]);
-          } catch {
-            continue;
-          }
-
-          if (msg.role === "assistant") {
-            // Extract text content (skip tool_use blocks)
-            let text = "";
-            if (typeof msg.content === "string") {
-              text = msg.content;
-            } else if (Array.isArray(msg.content)) {
-              text = msg.content
-                .filter((b) => b.type === "text")
-                .map((b) => b.text)
-                .join("\n");
-            }
-
-            if (text.trim()) {
-              const timestamp = new Date().toISOString().slice(11, 19);
-              const entry = `## Assistant [${timestamp}]\n\n${text.trim()}\n\n`;
-              fs.appendFileSync(logFile, entry, "utf-8");
-            }
-            break;
-          }
-        }
-      } catch {
-        // ignore transcript read errors
-      }
+    const assistantMsg = input.last_assistant_message || "";
+    if (assistantMsg.trim()) {
+      const timestamp = new Date().toISOString().slice(11, 19);
+      const entry = `## Assistant [${timestamp}]\n\n${assistantMsg.trim()}\n\n`;
+      fs.appendFileSync(logFile, entry, "utf-8");
     }
   }
 
