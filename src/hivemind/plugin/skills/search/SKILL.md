@@ -49,19 +49,19 @@ Combine results from all queries:
 - Keep the highest relevance % for each document
 - Sort by relevance descending
 
-### 4. Apply relevance thresholds
+### 4. Apply relevance thresholds — MANDATORY, NO EXCEPTIONS
 
-For each unique result, apply these rules:
+You MUST follow these rules AUTOMATICALLY. Do NOT ask the user for confirmation on >= 70% documents. Do NOT present a table and wait — just read them immediately.
 
-| Relevance | Action |
-|-----------|--------|
-| **>= 70%** | **Auto-read**: Run `hv search-read <path>` immediately. This reads the full content and increments hits. Present the content to the user. |
-| **30-69%** | **Ask user**: Use AskUserQuestion to ask "Found a possibly relevant lesson: '{title}' ({relevance}%). Read it?" Only run `hv search-read <path>` if the user confirms. |
-| **< 30%** | **Skip**: Do not read, do not increment hits. Mention in summary that low-relevance results were skipped. |
+| Relevance | Action | User confirmation |
+|-----------|--------|-------------------|
+| **>= 70%** | Run `hv search-read <path>` IMMEDIATELY. No questions. No table. Just read it and present the content. | **NO — forbidden to ask** |
+| **30-69%** | Ask the user: "Found a possibly relevant lesson: '{title}' ({relevance}%). Read it?" Only run `hv search-read <path>` if confirmed. | **YES — required** |
+| **< 30%** | Skip entirely. Do not read, do not increment hits. | N/A |
 
 ### 5. Read selected documents
 
-For documents that should be read (auto or confirmed):
+For documents selected by auto-read or user confirmation:
 
 ```bash
 hv search-read "<doc_path>"
