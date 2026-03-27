@@ -1,14 +1,264 @@
 # agent-hivemind
 
-AI 코딩 에이전트를 위한 하네스 엔지니어링 툴킷.
+A harness engineering toolkit for AI coding agents.
 
-프로젝트 초기화부터 태스크 실행, 피드백 수집까지 — AI 에이전트가 코드를 작성할 때 필요한 모든 컨텍스트를 구조화하고 관리합니다.
+Structures and manages all the context an AI agent needs — from project initialization to task execution to feedback collection.
+
+> **[한국어](#한국어)** 문서는 아래에 있습니다.
+
+## What is this?
+
+When you tell an AI coding agent (like Claude Code) to "build me a todo app", it starts writing code immediately. But the result is usually incomplete — no architecture design, no library research, no completion criteria.
+
+**agent-hivemind** fixes this by making the agent **think before it codes**:
+
+```
+"Build me a todo app"
+        ↓
+  /hv:clarify    ← 7-axis ambiguity check (what, why, how?)
+        ↓
+  /hv:plan       ← Write harness docs (architecture, tech stack, API specs)
+                   + Decompose into tasks (with completion criteria)
+        ↓
+  /hv:task       ← Execute each task (read specs → code → test → review)
+        ↓
+  /hv:feedback   ← Save lessons learned from the session
+```
+
+## How it works
+
+### Core concept: Harness Documents
+
+Harness documents are project specs that agents reference during implementation. They live in `~/agent-hivemind-data/projects/{name}/`:
+
+```
+projects/my-app/
+├── architecture.md      ← System structure, module boundaries (Mermaid diagrams)
+├── tech-stack.md        ← Tech stack, library versions, usage patterns
+├── build-verify.md      ← Build/test commands, CI pipeline
+├── rules.md             ← NEVER/ALWAYS rules, constraints
+└── features/
+    ├── 00_auth.md       ← Auth feature detailed spec
+    ├── 01_todo-crud.md  ← Todo CRUD API spec
+    └── 02_dashboard.md  ← Dashboard UI spec
+```
+
+`/hv:plan` writes these documents **first**, then creates tasks. When the agent executes a task, it reads these docs and implements accurately.
+
+### Feedback loop
+
+Lessons learned by agents are managed in 3 tiers:
+
+```
+L3 (session logs)  →  L2 (structured lessons)  →  L1 (critical lessons)
+   every conversation      BM25 dedup               promoted key insights
+   auto-saved              categorized              important.md
+```
+
+- `hv search "query"` — searches past lessons, auto-increments hit count
+- Lessons searched 3+ times get an L1 promotion suggestion
+- Agents learn from past mistakes instead of repeating them
+
+## Installation
+
+```bash
+pip install git+https://github.com/raravel/agent-hivemind.git
+```
+
+## Getting Started
+
+### 1. Initialize
+
+```bash
+hv init
+```
+
+This single command:
+- Creates `~/agent-hivemind-data/` data directory
+- Installs the Claude Code plugin (8 `/hv:*` skills)
+- Sets up model profiles (quality/balanced/budget)
+
+### 2. Link a project
+
+```bash
+cd my-project
+hv link
+```
+
+- Registers the project with the hivemind data repo
+- Injects the mandatory `/hv:clarify` rule into CLAUDE.md
+- All subsequent implementation requests trigger automatic requirement verification
+
+### 3. Use
+
+Just ask in natural language in Claude Code:
+
+```
+"Build me a todo app"
+```
+
+1. `/hv:clarify` auto-triggers — 7-axis ambiguity check
+2. `/hv:plan` writes specs + decomposes into tasks
+3. `/hv:task` executes tasks sequentially
+
+Or invoke skills directly:
+
+```
+/hv:plan Plan this project
+/hv:task Run the next task
+/hv:search "auth lessons"
+```
+
+## Data Structure
+
+```
+~/agent-hivemind-data/
+├── projects/                    ← Harness docs per project (specs)
+│   └── {project}/
+│       ├── architecture.md
+│       ├── tech-stack.md
+│       ├── build-verify.md
+│       ├── rules.md
+│       └── features/*.md
+├── tasks/                       ← Issue tracker (replaces Linear)
+│   └── {project}/
+│       ├── PRJ-001.md           ← Task (frontmatter + body)
+│       ├── PRJ-002.md
+│       └── _reports/            ← Execution reports
+├── level1/important.md          ← L1: Critical lessons (auto-generated)
+├── level2/                      ← L2: Structured lessons
+│   ├── frontend/
+│   ├── backend/
+│   ├── infra/
+│   └── general/
+├── level3/                      ← L3: Session logs
+├── index.json                   ← BM25 search index
+└── .hivemind.json               ← Global config
+```
+
+## Claude Code Plugin (`/hv:*`)
+
+Automatically installed as a Claude Code plugin when you run `hv init`.
+
+| Skill | Description | Auto-trigger |
+|-------|-------------|--------------|
+| `/hv:clarify` | 7-axis ambiguity check — mandatory before implementation | On implementation requests |
+| `/hv:plan` | Write harness docs + decompose into tasks | — |
+| `/hv:task` | Task execution pipeline (code → test → review) | — |
+| `/hv:feedback` | Extract session feedback → save as L2 | — |
+| `/hv:search` | BM25 knowledge search + hit counting | — |
+| `/hv:important` | L1 promote/demote/regenerate | — |
+| `/hv:audit` | Spec-code drift detection | — |
+| `/hv:init` | Workspace initialization orchestration | — |
+
+### `/hv:clarify` — Requirement Verification
+
+Evaluates implementation requests across 7 ambiguity axes:
+
+| Axis | Core Question |
+|------|---------------|
+| Purpose (Why) | Why build this? What problem does it solve? |
+| Scope | Where does it start and end? |
+| Technical Context (How) | What tech stack, environment, project? |
+| Integration (Fit) | How does it fit with existing systems? Conflicts? |
+| User/IO (Who/What) | Who uses it? What are inputs and outputs? |
+| Done Criteria | What are the must_haves (truths, artifacts, key_links)? |
+| Constraints | What must be followed or avoided? |
+
+Asks Socratic questions until all axes score <= 0.2.
+
+### `/hv:plan` — Planning
+
+1. **Phase 1**: Write harness documents (research libraries → architecture → feature specs with Mermaid diagrams)
+2. **Phase 2**: Decompose into tasks (completion criteria + spec references + dependencies)
+
+### `/hv:task` — Task Execution
+
+1. Fetch the next task (`hv run`)
+2. Read harness documents (mandatory)
+3. Run coding agent
+4. Run test agent
+5. Run code review agent
+6. Mark complete + generate report
+
+## CLI Reference
+
+### Project Management
+
+```bash
+hv init [--path PATH] [--git]     # Initialize workspace
+hv link [--name NAME]             # Link current project
+hv push                           # Push data repo to remote
+```
+
+### Task Management
+
+```bash
+hv task create -p <project> -t "<title>" [--type feat] [--priority high] [--depends ID]
+hv task list [-p <project>] [-s pending] [--priority high]
+hv task get <ID> [--format json]
+hv task update <ID> [--status in_progress] [--priority high]
+hv task next [-p <project>]
+hv run [-p <project>] [-t <ID>] [--format json]
+```
+
+### Feedback & Knowledge
+
+```bash
+hv feedback save -p <project> [--content FILE]    # Save L2 lesson
+hv search "<query>" [-p <project>]                # BM25 search
+hv important promote <path>                       # Promote to L1
+hv important demote "<query>"                     # Demote from L1
+hv important generate                             # Regenerate important.md
+```
+
+### Audit & Stats
+
+```bash
+hv audit -p <project> [--fix]                     # Spec-code drift detection
+hv stats -p <project> [--since DATE]              # Execution metrics
+```
+
+### Configuration
+
+```bash
+hv config                                         # Show all config
+hv config <key>                                   # Get value
+hv config <key> <value>                           # Set value
+hv config --profile balanced                      # Switch model profile
+```
+
+## Model Profiles
+
+Configure which models to use for each agent role in the pipeline:
+
+| Profile | Planner | Executor | Reviewer |
+|---------|---------|----------|----------|
+| `quality` | opus | opus | opus |
+| `balanced` | opus | sonnet | sonnet |
+| `budget` | sonnet | sonnet | haiku |
+
+```bash
+hv config --profile balanced    # default
+```
+
+## Inspiration
+
+- [OpenAI: Harness Engineering](https://openai.com/index/harness-engineering/)
+- [Anthropic: Effective Harnesses](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)
+- [Addy Osmani: Self-Improving Agents](https://addyosmani.com/blog/self-improving-agents/)
+
+---
+
+# 한국어
+
+AI 코딩 에이전트를 위한 하네스 엔지니어링 툴킷.
 
 ## 이게 뭔가요?
 
 AI 코딩 에이전트(Claude Code 등)에게 "투두리스트 만들어줘"라고 하면, 에이전트는 바로 코드를 작성하기 시작합니다. 하지만 결과물은 대개 불완전합니다 — 아키텍처 설계 없이, 라이브러리 조사 없이, 완료 조건 없이 작업하기 때문입니다.
 
-**agent-hivemind**은 이 문제를 해결합니다:
+**agent-hivemind**은 에이전트가 코드를 짜기 전에 **생각하게** 만드는 시스템입니다:
 
 ```
 "투두리스트 만들어줘"
@@ -22,8 +272,6 @@ AI 코딩 에이전트(Claude Code 등)에게 "투두리스트 만들어줘"라�
         ↓
   /hv:feedback   ← 세션에서 배운 교훈 저장
 ```
-
-에이전트가 코드를 짜기 전에 **생각하게** 만드는 시스템입니다.
 
 ## 어떻게 작동하나요?
 
@@ -67,186 +315,33 @@ pip install git+https://github.com/raravel/agent-hivemind.git
 
 ## 시작하기
 
-### 1. 초기화
-
 ```bash
+# 1. 초기화 — 데이터 폴더 + 플러그인 설치
 hv init
-```
 
-이 명령어 하나로:
-- `~/agent-hivemind-data/` 데이터 디렉토리 생성
-- Claude Code 플러그인 설치 (`/hv:*` 스킬 8개)
-- 모델 프로파일 설정 (quality/balanced/budget)
-
-### 2. 프로젝트 연결
-
-```bash
+# 2. 프로젝트 연결 — CLAUDE.md에 규칙 주입
 cd my-project
 hv link
+
+# 3. 사용 — 자연어로 요청
+# Claude Code에서: "투두리스트 앱 만들어줘"
+# → /hv:clarify 자동 호출 → /hv:plan → /hv:task
 ```
 
-- 프로젝트를 hivemind 데이터 레포에 등록
-- CLAUDE.md에 `/hv:clarify` 필수 규칙 주입
-- 이후 구현 요청 시 자동으로 요구사항 검증 시작
+## 스킬 목록
 
-### 3. 사용
+| 스킬 | 설명 |
+|------|------|
+| `/hv:clarify` | 7축 모호성 검증 — 구현 요청 시 자동 호출 |
+| `/hv:plan` | 하네스 문서 작성 + 태스크 분해 |
+| `/hv:task` | 태스크 실행 파이프라인 (코딩 → 테스트 → 리뷰) |
+| `/hv:feedback` | 세션 피드백 → L2 저장 |
+| `/hv:search` | BM25 지식 검색 + 히트카운트 |
+| `/hv:important` | L1 핵심 교훈 승격/강등 |
+| `/hv:audit` | 스펙-코드 드리프트 탐지 |
+| `/hv:init` | 워크스페이스 초기화 |
 
-Claude Code에서 자연어로 작업을 요청하면 됩니다:
-
-```
-"투두리스트 앱 만들어줘"
-```
-
-1. `/hv:clarify`가 자동 호출 — 7축 모호성 검증
-2. `/hv:plan`으로 스펙 작성 + 태스크 분해
-3. `/hv:task`로 태스크 순차 실행
-
-또는 직접 스킬을 호출할 수도 있습니다:
-
-```
-/hv:plan 이 프로젝트를 계획해줘
-/hv:task 다음 태스크 실행해줘
-/hv:search "인증 관련 교훈"
-```
-
-## 데이터 구조
-
-```
-~/agent-hivemind-data/
-├── projects/                    ← 프로젝트별 하네스 문서 (스펙)
-│   └── {project}/
-│       ├── architecture.md
-│       ├── tech-stack.md
-│       ├── build-verify.md
-│       ├── rules.md
-│       └── features/*.md
-├── tasks/                       ← 이슈 트래커 (Linear 대체)
-│   └── {project}/
-│       ├── PRJ-001.md           ← 태스크 (frontmatter + body)
-│       ├── PRJ-002.md
-│       └── _reports/            ← 실행 리포트
-├── level1/important.md          ← L1: 핵심 교훈 (자동 생성)
-├── level2/                      ← L2: 구조화된 교훈
-│   ├── frontend/
-│   ├── backend/
-│   ├── infra/
-│   └── general/
-├── level3/                      ← L3: 세션 로그
-├── index.json                   ← BM25 검색 인덱스
-└── .hivemind.json               ← 전역 설정
-```
-
-## Claude Code 플러그인 (`/hv:*`)
-
-`hv init` 실행 시 Claude Code 플러그인으로 자동 설치됩니다.
-
-| 스킬 | 설명 | 자동 호출 |
-|------|------|-----------|
-| `/hv:clarify` | 7축 모호성 검증 — 구현 요청 시 필수 | 구현 요청 시 자동 |
-| `/hv:plan` | 하네스 문서 작성 + 태스크 분해 | — |
-| `/hv:task` | 태스크 실행 파이프라인 (코딩→테스트→리뷰) | — |
-| `/hv:feedback` | 세션 피드백 추출 → L2 저장 | — |
-| `/hv:search` | BM25 지식 검색 + 히트카운트 | — |
-| `/hv:important` | L1 승격/강등/재생성 | — |
-| `/hv:audit` | 스펙-코드 드리프트 탐지 | — |
-| `/hv:init` | 워크스페이스 초기화 오케스트레이션 | — |
-
-### `/hv:clarify` — 요구사항 검증
-
-구현 요청을 받으면 7개 축으로 모호성을 평가합니다:
-
-| 축 | 핵심 질문 |
-|----|----------|
-| Purpose (Why) | 왜 만드는가? |
-| Scope | 어디서 시작하고 끝나는가? |
-| Technical Context (How) | 어떤 기술 스택? |
-| Integration (Fit) | 기존 시스템과 충돌은? |
-| User/IO (Who/What) | 누가 쓰고, 입출력은? |
-| Done Criteria | 완료 must_haves는? |
-| Constraints | 반드시 지킬/피할 것은? |
-
-모든 축이 0.2 이하가 될 때까지 소크라테스식 질문을 반복합니다.
-
-### `/hv:plan` — 계획 수립
-
-1. **Phase 1**: 하네스 문서 작성 (라이브러리 조사 → 아키텍처 → 기능 스펙)
-2. **Phase 2**: 태스크 분해 (완료 조건 + 스펙 참조 + 의존성)
-
-### `/hv:task` — 태스크 실행
-
-1. 다음 태스크 가져오기 (`hv run`)
-2. 하네스 문서 읽기 (필수)
-3. 코딩 에이전트 실행
-4. 테스트 에이전트 실행
-5. 코드 리뷰 에이전트 실행
-6. 완료 처리 + 리포트 생성
-
-## CLI 레퍼런스
-
-### 프로젝트 관리
-
-```bash
-hv init [--path PATH] [--git]     # 워크스페이스 초기화
-hv link [--name NAME]             # 현재 프로젝트 연결
-hv push                           # 데이터 레포 원격 푸시
-```
-
-### 태스크 관리
-
-```bash
-hv task create -p <project> -t "<title>" [--type feat] [--priority high] [--depends ID]
-hv task list [-p <project>] [-s pending] [--priority high]
-hv task get <ID> [--format json]
-hv task update <ID> [--status in_progress] [--priority high]
-hv task next [-p <project>]
-hv run [-p <project>] [-t <ID>] [--format json]
-```
-
-### 피드백 & 지식
-
-```bash
-hv feedback save -p <project> [--content FILE]    # L2 교훈 저장
-hv search "<query>" [-p <project>]                # BM25 검색
-hv important promote <path>                       # L1 승격
-hv important demote "<query>"                     # L1 강등
-hv important generate                             # important.md 재생성
-```
-
-### 감사 & 통계
-
-```bash
-hv audit -p <project> [--fix]                     # 스펙-코드 드리프트 탐지
-hv stats -p <project> [--since DATE]              # 실행 메트릭 집계
-```
-
-### 설정
-
-```bash
-hv config                                         # 전체 설정 출력
-hv config <key>                                   # 값 조회
-hv config <key> <value>                           # 값 설정
-hv config --profile balanced                      # 모델 프로파일 변경
-```
-
-## 모델 프로파일
-
-에이전트 파이프라인에서 각 역할에 어떤 모델을 사용할지 설정합니다:
-
-| 프로파일 | Planner | Executor | Reviewer |
-|----------|---------|----------|----------|
-| `quality` | opus | opus | opus |
-| `balanced` | opus | sonnet | sonnet |
-| `budget` | sonnet | sonnet | haiku |
-
-```bash
-hv config --profile balanced    # 기본값
-```
-
-## 영감
-
-- [OpenAI: Harness Engineering](https://openai.com/index/harness-engineering/)
-- [Anthropic: Effective Harnesses](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)
-- [Addy Osmani: Self-Improving Agents](https://addyosmani.com/blog/self-improving-agents/)
+전체 CLI 레퍼런스는 위의 [CLI Reference](#cli-reference) 섹션을 참조하세요.
 
 ## License
 
