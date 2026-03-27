@@ -5,6 +5,7 @@ from __future__ import annotations
 import click
 
 from hivemind.commands.audit import audit as _audit_cmd
+from hivemind.commands.commit import push_cmd as _push_cmd
 from hivemind.commands.config_cmd import config_cmd as _config_cmd
 from hivemind.commands.feedback import feedback as _feedback_group
 from hivemind.commands.important import important as _important_group
@@ -28,10 +29,7 @@ cli.add_command(_init_cmd)
 cli.add_command(_link_cmd)
 
 
-@cli.command()
-def push() -> None:
-    """Push local changes to the remote."""
-    click.echo("Not implemented yet")
+cli.add_command(_push_cmd, "push")
 
 
 # --- task group ---
