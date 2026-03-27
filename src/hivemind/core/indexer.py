@@ -62,10 +62,23 @@ def load_index(path: Path) -> dict[str, Any]:
     return data
 
 
+def _token_overlap_score(query_tokens: list[str], doc_tokens: list[str]) -> float:
+    """Simple token overlap scoring for small corpora where BM25 fails."""
+    if not doc_tokens:
+        return 0.0
+    query_set = set(query_tokens)
+    matches = sum(1 for t in doc_tokens if t in query_set)
+    return matches / len(doc_tokens)
+
+
 def search(
     query: str, index_data: dict[str, Any], top_k: int = 5
 ) -> list[tuple[str, float]]:
     """BM25 search over indexed docs.
+
+    Falls back to token overlap scoring when the corpus is too small
+    for BM25 to produce meaningful scores (BM25 IDF goes negative with
+    very few documents).
 
     Returns list of (doc_path, score) pairs, sorted by score descending.
     """
@@ -74,9 +87,14 @@ def search(
         return []
 
     corpus: list[list[str]] = [doc["tokens"] for doc in docs]
-    bm25 = BM25Okapi(corpus)
     query_tokens = _tokenize(query)
-    scores: list[float] = list(bm25.get_scores(query_tokens))
+
+    # BM25 needs 3+ docs for meaningful IDF; fall back for small corpora
+    if len(docs) >= 3:
+        bm25 = BM25Okapi(corpus)
+        scores: list[float] = list(bm25.get_scores(query_tokens))
+    else:
+        scores = [_token_overlap_score(query_tokens, d) for d in corpus]
 
     results: list[tuple[str, float]] = []
     for i, score in enumerate(scores):
