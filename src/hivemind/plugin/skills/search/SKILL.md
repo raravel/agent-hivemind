@@ -4,75 +4,60 @@ description: "Search the knowledge base for relevant lessons. Use when the user 
 
 # /hv:search -- Knowledge base search
 
-Searches the hivemind knowledge base (L2 documents) using multi-query BM25 ranking.
-
-## When to use
-
-- User asks "what do we know about...", "search for...", "find lessons about..."
-- User runs `/hv:search` explicitly
-- Before starting implementation, to check for relevant prior knowledge
-
 ## Available commands
 
-ONLY these commands exist. Do NOT invent others.
-
 ```
-hv search "<query>"                    # Search (read-only, no hits increment)
-hv search-read "<path>"                # Read document + increment hits
-hv index rebuild                       # Rebuild search index
+hv search "<query>"                    # Search (no hits increment)
+hv search-read "<path>"                # Read + increment hits
+hv index rebuild                       # Rebuild index
 ```
 
-The `<path>` for `hv search-read` is the exact Path value from `hv search` output.
+## Execution flow
 
-## Steps
+When this skill is invoked, execute these steps IN ORDER without stopping between them:
 
-### 1. Generate English keywords FIRST — NEVER search raw user input
+**Step 1.** Convert user input to 2-3 English keyword combinations. NEVER use the raw user input.
 
-L2 documents are English-only. Your FIRST action must be generating 2-4 English keyword combinations. Do NOT run `hv search` with the user's raw input at all — not even as a first attempt.
-
-Do this silently. Do not explain or mention the translation.
-
-**Examples:**
-
-| User says | Your FIRST searches (no raw input search before these) |
-|-----------|-------------------------------------------------------|
-| "실시간 검색" | `hv search "real-time search"`, `hv search "websearch live data"` |
-| "인증 관련" | `hv search "authentication"`, `hv search "auth login token"` |
-| "에러 처리" | `hv search "error handling"`, `hv search "exception retry"` |
-| "web search" | `hv search "web search"`, `hv search "websearch fetch URL"` |
-
-### 2. Run multiple searches
-
+**Step 2.** Run `hv search` for each combination:
 ```bash
 hv search "english keywords 1"
 hv search "english keywords 2"
-hv search "english keywords 3"
 ```
 
-### 3. Merge results
+**Step 3.** For EVERY result with relevance >= 70%, IMMEDIATELY run:
+```bash
+hv search-read "<path from results>"
+```
+Do this right away. Do not present a table. Do not ask. Do not summarize first. Just run the command.
 
-Deduplicate by path, keep highest relevance %, sort descending.
+**Step 4.** For results 30-69%, ask the user if they want to read it.
 
-### 4. Apply thresholds — MANDATORY, NO EXCEPTIONS
+**Step 5.** Present a summary of what was read.
 
-| Relevance | Action |
-|-----------|--------|
-| **>= 70%** | Run `hv search-read "<path>"` IMMEDIATELY. No table. No asking. Just read and present content. |
-| **30-69%** | Ask the user: "Found '{title}' ({relevance}%). Read it?" Run `hv search-read` only if confirmed. |
-| **< 30%** | Skip. No read, no hit increment. |
+## Example (correct)
 
-### 5. Handle promotion suggestions
+User: "웹 검색"
 
-If `hv search-read` suggests promotion (hits >= 3), show it and offer `hv important promote <path>`.
+```bash
+hv search "web search"           # Step 2
+hv search "websearch real-time"  # Step 2
+# Results show 100% relevance for a document
+hv search-read "level2\general\use-websearch-proactively.md"  # Step 3 — IMMEDIATE
+```
 
-### 6. Rebuild if empty
+Then present the content to the user.
 
-If ALL searches return nothing: `hv index rebuild`, then retry.
+## Example (WRONG — do not do this)
+
+```bash
+hv search "웹 검색"              # WRONG: raw Korean input
+hv search "web search"
+# Shows table, asks "read it?" # WRONG: 100% should auto-read
+```
 
 ## Rules
 
-- **NEVER run `hv search` with the user's raw input.** Generate English keywords first. Always.
-- **NEVER use commands that don't exist** (no `hv root`, `hv config show`, etc.). Only the 3 commands listed above.
-- **NEVER Read L2 files directly.** Always use `hv search-read`.
-- **>= 70% = auto-read.** Do not ask, do not show a table first.
-- **< 30% = skip.** Do not read, do not increment hits.
+- NEVER search with raw user input. English keywords only.
+- NEVER stop after search to show a table if any result is >= 70%. Read it first, present after.
+- NEVER use nonexistent commands. Only the 3 listed above.
+- NEVER read L2 files with the Read tool. Use `hv search-read` only.
