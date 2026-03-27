@@ -9,6 +9,5 @@
   "repository": "https://github.com/raravel/agent-hivemind",
   "license": "MIT",
   "keywords": ["harness", "agent", "hivemind", "task", "feedback"],
-  "skills": "./skills/",
-  "hooks": "./hooks/hooks.json"
+  "skills": "./skills/"
 }

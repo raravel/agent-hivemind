@@ -32,6 +32,15 @@ function main() {
   const sessionId = input.session_id || "unknown";
   const event = input.hook_event_name;
 
+  // Debug: log to temp file to confirm hook is firing
+  try {
+    fs.appendFileSync(
+      path.join(require("os").tmpdir(), "hv-hook-debug.log"),
+      `${new Date().toISOString()} event=${event} cwd=${cwd}\n`,
+      "utf-8"
+    );
+  } catch { /* ignore */ }
+
   // Find .hivemind-link.json to get project name + data path
   const linkFile = path.join(cwd, ".hivemind-link.json");
   if (!fs.existsSync(linkFile)) {
@@ -55,9 +64,10 @@ function main() {
   }
 
   // Resolve log file path
+  const resolvedDataPath = dataPath;
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const shortSession = sessionId.slice(0, 8);
-  const logDir = path.join(dataPath, "level3", project);
+  const logDir = path.join(resolvedDataPath, "level3", project);
   const logFile = path.join(logDir, `${today}_${shortSession}.md`);
 
   // Create directory if needed
