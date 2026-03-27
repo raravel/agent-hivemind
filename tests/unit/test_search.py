@@ -133,7 +133,7 @@ class TestSearchReturnsResultsAndIncrementsHits:
 
 
 class TestPromotionSuggestion:
-    """Test that hits >= 3 triggers promotion suggestion."""
+    """Test that hits >= PROMOTION_THRESHOLD triggers promotion suggestion."""
 
     def test_hits_below_threshold_not_promoted(self, tmp_path: Path) -> None:
         data_path = _make_data_dir(tmp_path)
@@ -159,10 +159,10 @@ class TestPromotionSuggestion:
             "lesson.md",
             "Test Lesson",
             "test content",
-            hits=2,
+            hits=PROMOTION_THRESHOLD - 1,
             promoted=False,
         )
-        # After increment, hits = 3, at threshold
+        # After increment, hits = PROMOTION_THRESHOLD
         new_hits = _increment_hits(data_path, "level2/general/lesson.md")
         assert new_hits >= PROMOTION_THRESHOLD
         assert not _is_promoted(data_path, "level2/general/lesson.md")
@@ -175,17 +175,16 @@ class TestPromotionSuggestion:
             "lesson.md",
             "Test Lesson",
             "test content",
-            hits=5,
+            hits=PROMOTION_THRESHOLD + 1,
             promoted=True,
         )
-        # Already promoted, so no suggestion even though hits >= 3
         assert _is_promoted(data_path, "level2/general/lesson.md")
 
     def test_promotion_suggestion_message_in_cli(
         self, tmp_path: Path
     ) -> None:
-        """Integration-style test: search with a doc at hits=2 should
-        trigger promotion suggestion after the search increments it to 3.
+        """Integration-style test: search with a doc near threshold should
+        trigger promotion suggestion after the search increments it.
         """
         data_path = _make_data_dir(tmp_path)
         _create_l2_doc(
@@ -194,7 +193,7 @@ class TestPromotionSuggestion:
             "api-auth.md",
             "API Authentication",
             "always validate api tokens before processing requests",
-            hits=2,
+            hits=PROMOTION_THRESHOLD - 1,
             promoted=False,
         )
         _create_l2_doc(
