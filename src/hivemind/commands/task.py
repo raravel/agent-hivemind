@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
@@ -18,6 +19,8 @@ from hivemind.core.parser import (
     update_frontmatter,
     validate_status,
 )
+
+_log = logging.getLogger(__name__)
 
 PRIORITY_ORDER: dict[str, int] = {"high": 3, "medium": 2, "low": 1}
 
@@ -36,6 +39,117 @@ _VALID_PARENT: dict[str, str | frozenset[str] | None] = {
     "bug": _STORY_TYPES,
     "chore": _STORY_TYPES,
 }
+
+# Current schema version for _index.json
+_INDEX_VERSION: int = 1
+
+# Frontmatter keys stored in the index
+_INDEX_FIELDS: list[str] = [
+    "status",
+    "priority",
+    "type",
+    "parent",
+    "depends_on",
+    "title",
+    "updated",
+]
+
+
+def _index_path(data_path: Path, project: str) -> Path:
+    """Return the path to a project's task index file."""
+    return data_path / "tasks" / project / "_index.json"
+
+
+def _load_task_index(
+    data_path: Path, project: str
+) -> dict[str, Any] | None:
+    """Load ``_index.json`` for *project*.
+
+    Returns the parsed dict or ``None`` if the file is missing, corrupt,
+    or has an incompatible version.
+    """
+    path = _index_path(data_path, project)
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data: dict[str, Any] = json.loads(raw)
+        if data.get("version") != _INDEX_VERSION:
+            _log.debug("Index version mismatch at %s", path)
+            return None
+        if not isinstance(data.get("tasks"), dict):
+            return None
+        return data
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+def _save_task_index(
+    data_path: Path, project: str, index_data: dict[str, Any]
+) -> None:
+    """Write *index_data* to ``_index.json``."""
+    path = _index_path(data_path, project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(index_data, indent=2, default=str) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _fm_to_index_entry(fm: dict[str, object]) -> dict[str, object]:
+    """Extract the subset of frontmatter fields stored in the index."""
+    entry: dict[str, object] = {}
+    for key in _INDEX_FIELDS:
+        value = fm.get(key)
+        # Normalise None / missing to a sensible default
+        if key == "depends_on":
+            entry[key] = list(value) if isinstance(value, list) else []
+        elif key == "parent":
+            entry[key] = str(value) if value else None
+        else:
+            entry[key] = value
+    return entry
+
+
+def _rebuild_task_index(
+    data_path: Path, project: str
+) -> dict[str, Any]:
+    """Scan all ``.md`` files for *project* and build a fresh index."""
+    project_dir = data_path / "tasks" / project
+    tasks: dict[str, dict[str, object]] = {}
+
+    if project_dir.exists():
+        for md_file in sorted(project_dir.glob("*.md")):
+            if md_file.name.startswith("_"):
+                continue
+            try:
+                fm, _body = parse_task(md_file)
+                task_id = fm.get("id")
+                if isinstance(task_id, str):
+                    tasks[task_id] = _fm_to_index_entry(fm)
+            except Exception:
+                continue
+
+    index_data: dict[str, Any] = {
+        "version": _INDEX_VERSION,
+        "tasks": tasks,
+    }
+    _save_task_index(data_path, project, index_data)
+    return index_data
+
+
+def _update_task_index_entry(
+    data_path: Path,
+    project: str,
+    task_id: str,
+    fm_dict: dict[str, object],
+) -> None:
+    """Update a single entry in the index, creating the index if needed."""
+    index_data = _load_task_index(data_path, project)
+    if index_data is None:
+        index_data = _rebuild_task_index(data_path, project)
+        return  # rebuild already includes the new/updated entry
+
+    index_data["tasks"][task_id] = _fm_to_index_entry(fm_dict)
+    _save_task_index(data_path, project, index_data)
 
 
 def _find_config() -> tuple[HivemindConfig, Path]:
@@ -70,31 +184,80 @@ def _find_task_file(data_path: Path, task_id: str) -> Path:
     raise click.ClickException(f"Task not found: {task_id}")
 
 
+def _scan_tasks_from_index(
+    data_path: Path,
+    project: str,
+) -> list[tuple[dict[str, object], str, Path]] | None:
+    """Try to build the scan result from the index for one project.
+
+    Returns ``None`` if the index is unavailable and a full scan is needed.
+    Body is always ``""`` because the index does not store bodies.
+    """
+    index_data = _load_task_index(data_path, project)
+    if index_data is None:
+        return None
+
+    tasks_dir = data_path / "tasks" / project
+    results: list[tuple[dict[str, object], str, Path]] = []
+    for task_id, entry in index_data["tasks"].items():
+        fm: dict[str, object] = {"id": task_id, **entry}
+        path = tasks_dir / f"{task_id}.md"
+        results.append((fm, "", path))
+    return results
+
+
+def _scan_tasks_glob(
+    data_path: Path,
+    dirs: list[Path],
+) -> list[tuple[dict[str, object], str, Path]]:
+    """Original glob+parse fallback for scanning task files."""
+    results: list[tuple[dict[str, object], str, Path]] = []
+    for d in dirs:
+        if not d.exists():
+            continue
+        for md_file in sorted(d.glob("*.md")):
+            if md_file.name.startswith("_"):
+                continue
+            try:
+                fm, body = parse_task(md_file)
+                results.append((fm, body, md_file))
+            except Exception:
+                continue
+    return results
+
+
 def _scan_tasks(
     data_path: Path,
     project: str | None = None,
 ) -> list[tuple[dict[str, object], str, Path]]:
-    """Scan task files and return list of (frontmatter, body, path)."""
+    """Scan task files and return list of (frontmatter, body, path).
+
+    Reads from ``_index.json`` when available for better performance.
+    Falls back to glob+parse and rebuilds the index on a miss.
+    """
     tasks_root = data_path / "tasks"
     if not tasks_root.exists():
         return []
-
-    results: list[tuple[dict[str, object], str, Path]] = []
 
     if project:
         dirs = [tasks_root / project]
     else:
         dirs = [d for d in tasks_root.iterdir() if d.is_dir()]
 
+    results: list[tuple[dict[str, object], str, Path]] = []
+
     for d in dirs:
         if not d.exists():
             continue
-        for md_file in sorted(d.glob("*.md")):
-            try:
-                fm, body = parse_task(md_file)
-                results.append((fm, body, md_file))
-            except Exception:
-                continue
+        proj_name = d.name
+        indexed = _scan_tasks_from_index(data_path, proj_name)
+        if indexed is not None:
+            results.extend(indexed)
+        else:
+            # Fallback: glob+parse, then rebuild index for next time
+            scanned = _scan_tasks_glob(data_path, [d])
+            results.extend(scanned)
+            _rebuild_task_index(data_path, proj_name)
 
     return results
 
@@ -170,6 +333,11 @@ def _auto_complete_parents(
     parent_path = _find_task_file(data_path, parent_id)
     today = date.today().isoformat()
     update_frontmatter(parent_path, {"status": "done", "updated": today})
+
+    # Update task index for the auto-completed parent
+    project_name = parent_path.parent.name
+    parent_fm_fresh, _ = parse_task(parent_path)
+    _update_task_index_entry(data_path, project_name, parent_id, parent_fm_fresh)
 
     parent_type = str(parent_fm.get("type", ""))
     click.echo(f"Auto-completed: {parent_id} [{parent_type}]")
@@ -400,6 +568,9 @@ def create(
     task_path = data_path / "tasks" / project / f"{task_id}.md"
     create_task_file(task_path, fm, "")
 
+    # Update task index
+    _update_task_index_entry(data_path, project, task_id, fm)
+
     # Update counter in config
     cfg.set(f"projects.{project}.counter", counter)
     cfg.save()
@@ -564,11 +735,13 @@ def get(task_id: str, fmt: str) -> None:
     type=click.Choice(["high", "medium", "low"]),
 )
 @click.option("--title", "-t", default=None, help="New title.")
+@click.option("--reason", default=None, help="Reason for blocking or status change.")
 def update(
     task_id: str,
     status: str | None,
     priority: str | None,
     title: str | None,
+    reason: str | None,
 ) -> None:
     """Update an existing task."""
     _cfg, data_path = _find_config()
@@ -581,13 +754,20 @@ def update(
         updates["priority"] = priority
     if title is not None:
         updates["title"] = title
+    if reason is not None:
+        updates["blocked_reason"] = reason
 
     if not updates:
-        click.echo("Nothing to update. Provide --status, --priority, or --title.")
+        click.echo("Nothing to update. Provide --status, --priority, --title, or --reason.")
         return
 
     updates["updated"] = date.today().isoformat()
     update_frontmatter(task_path, updates)
+
+    # Update task index — the project name is the parent directory name
+    project_name = task_path.parent.name
+    fm_after, _body_after = parse_task(task_path)
+    _update_task_index_entry(data_path, project_name, task_id, fm_after)
 
     auto_commit(data_path, f"task: update {task_id}")
 
@@ -597,7 +777,7 @@ def update(
 
     # Auto-complete parents if status changed to "done"
     if status == "done":
-        fm, _body = parse_task(task_path)
+        fm = fm_after
         all_tasks = _load_all_tasks(data_path)
 
         # Update the in-memory copy so sibling check uses current state

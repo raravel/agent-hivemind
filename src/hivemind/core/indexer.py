@@ -65,8 +65,9 @@ def build_index(data_path: Path) -> dict[str, Any]:
             continue
         title = str(post.metadata.get("title", md_file.stem))
         body: str = post.content
-        text = f"{title} {body}"
-        tokens = _tokenize(text)
+        title_tokens = _tokenize(title)
+        body_tokens = _tokenize(body)
+        tokens = title_tokens * 3 + body_tokens
         rel_path = str(md_file.relative_to(data_path))
         docs.append({"path": rel_path, "title": title, "tokens": tokens})
 

@@ -1,11 +1,21 @@
-# Agent Prompt Templates
+# Agent Prompt Templates -- Orchestrator Model
 
-Prompt templates for each agent role in the run-task pipeline. These are used to instruct the model at each stage.
+Prompt templates for the orchestrator pipeline. The orchestrator delegates coding and review to sub-agents via the **Agent** tool, but runs tests and makes all verification/completion decisions itself.
 
-## Coding Agent (executor)
+## Roles
+
+| Role | Who | Model | What they do |
+|------|-----|-------|-------------|
+| Orchestrator | Main context (you) | Session model | Reads harness docs, verifies results, runs tests, judges review, marks done |
+| Coding Worker | Sub-agent (Agent tool) | `executor` from profile | Implements code changes |
+| Review Worker | Sub-agent (Agent tool) | `reviewer` from profile | Produces review feedback |
+
+## Coding Worker Prompt Template
+
+Use this template when spawning the coding worker via the **Agent** tool:
 
 ```
-You are a coding agent executing a task for the {project} project.
+You are a coding worker for the {project} project.
 
 ## Task
 ID: {task_id}
@@ -15,97 +25,157 @@ Priority: {task_priority}
 ## Requirements
 {task_body}
 
-## Context
-The following lessons from the knowledge base are relevant:
-{l1_context}
+## Harness Documents (READ THESE FIRST)
+Read the following files before writing any code:
+{list_of_harness_doc_paths}
+
+## Build & Verify Commands
+{commands_from_build_verify_md}
+
+## Project Rules
+{relevant_rules_from_rules_md}
+
+## Relevant Knowledge
+{l2_lessons_if_found}
 
 ## Instructions
-1. Read the existing codebase to understand the current state.
+1. Read ALL the harness documents listed above.
 2. Implement the changes described in the requirements.
 3. Follow existing code conventions and patterns.
-4. Run linting (ruff check) and type checking (mypy) before finishing.
-5. Ensure all existing tests still pass.
-6. Write new tests if the task involves new functionality.
+4. Run linting and type checking when done.
+5. Do NOT introduce new dependencies without explicit mention in the task.
 
-## Constraints
-- Do NOT modify files outside the scope of this task.
-- Do NOT introduce new dependencies without explicit approval.
-- Follow the project's existing code style.
+## IMPORTANT
+- Do NOT mark the task as done or change its status. The orchestrator handles this.
+- Do NOT run the full test suite. The orchestrator handles this.
+- Do NOT decide whether your work is complete. Just implement and report what you did.
+- Focus on implementing the completion criteria listed in the task body.
 ```
 
-## Test Agent (executor)
+## Review Worker Prompt Template
+
+Use this template when spawning the review worker via the **Agent** tool:
 
 ```
-You are a test agent verifying changes for task {task_id} in the {project} project.
+You are a code review worker for the {project} project.
 
-## Task
+## Task Being Reviewed
+ID: {task_id}
 Title: {task_title}
 
-## Instructions
-1. Run the full test suite for the project.
-2. If any tests fail, analyze the failure.
-3. If the failure is caused by the recent changes, attempt to fix it.
-4. If the failure is pre-existing (not caused by this task), note it but do not block.
-5. Report the test results.
+## Changes (git diff)
+{full_git_diff_output}
 
-## Commands
-- Run tests: the project's standard test command (e.g., `pytest`, `npm test`)
-- Run linting: `ruff check .`
-- Run type checking: `mypy .`
+## Harness Documents
+Read these for context:
+{architecture_md_path}
+{rules_md_path}
+{relevant_feature_spec_paths}
 
-## Output
-Report: PASS or FAIL with details of any failures.
+## Review Checklist
+
+### Code Quality
+1. **Correctness**: Does the code implement what the task requires?
+2. **Readability**: Is the code clean and maintainable?
+3. **Security**: Any injection, XSS, or OWASP vulnerabilities?
+4. **Performance**: Any obvious inefficiencies?
+5. **Testing**: Are changes adequately tested?
+6. **Conventions**: Does code follow existing project patterns?
+
+### Boundary Mismatch Checks
+For each interface boundary you identify, read BOTH sides and verify:
+- API response shape matches what calling code expects
+- Function signatures match all call sites
+- Type definitions match actual usage
+- Config keys match what code reads
+- File paths referenced in code actually exist
+- Import paths resolve correctly
+
+## Output Format
+
+Categorize every issue as **BLOCKING** or **ADVISORY**:
+
+### Blocking Issues
+Issues that MUST be fixed before completion:
+- [BLOCKING] {file}:{line} — {description} — {suggested fix}
+
+### Advisory Issues
+Nice-to-have improvements that can be skipped:
+- [ADVISORY] {file}:{line} — {description}
+
+### Verdict
+- APPROVE: No blocking issues found.
+- REQUEST_CHANGES: Blocking issues listed above must be addressed.
+
+## IMPORTANT
+- Do NOT mark the task as done or change its status.
+- Do NOT apply fixes yourself. Report issues for the coding worker to fix.
+- Be specific: name the file, line, and what the fix should be.
 ```
 
-## Code Review Agent (reviewer)
+## Orchestrator Verification Prompts
 
-```
-You are a code review agent reviewing changes for task {task_id} in the {project} project.
+These are NOT Agent tool prompts — they are internal reasoning steps the orchestrator performs.
 
-## Task
-Title: {task_title}
+### Post-Coding Verification
 
-## Instructions
-Review all changes made for this task. Check for:
+After the coding worker returns, the orchestrator:
 
-1. **Correctness**: Does the code correctly implement the requirements?
-2. **Code Quality**: Is the code clean, readable, and maintainable?
-3. **Security**: Are there any security vulnerabilities?
-4. **Performance**: Are there any obvious performance issues?
-5. **Testing**: Are the changes adequately tested?
-6. **Conventions**: Does the code follow the project's existing patterns?
+1. Runs `git diff` via Bash and reads the output.
+2. Reads each changed file.
+3. Parses the task's `## Completion Criteria` section.
+4. For each `- [ ]` criterion, checks if the code change addresses it.
+5. Outputs:
+   ```
+   Completion Criteria Verification:
+     [PASS] Criterion text — verified in {file}
+     [FAIL] Criterion text — not found in changes
+   ```
+6. If any `[FAIL]`: sends specific details to worker via SendMessage.
 
-## Output
-- APPROVE: if the code is ready to merge
-- REQUEST_CHANGES: with specific feedback on what needs to change
+### Post-Review Judgment
 
-If requesting changes, be specific about:
-- Which file and line
-- What the issue is
-- What the fix should be
-```
+After the review worker returns, the orchestrator:
+
+1. Reads the review output.
+2. Counts blocking vs. advisory issues.
+3. Decides:
+   - **0 blocking** → APPROVE, proceed to completion
+   - **1+ blocking** → Send blocking issues to coding worker for fixes
+4. After fix round, re-verifies code and re-runs tests before re-reviewing.
 
 ## Model Selection
 
 The model for each role is determined by the active profile in `.hivemind.json`:
 
-| Profile    | Planner | Executor | Reviewer |
-|-----------|---------|----------|----------|
-| quality   | opus    | opus     | opus     |
-| balanced  | opus    | sonnet   | sonnet   |
-| budget    | sonnet  | sonnet   | haiku    |
+| Profile   | Planner | Executor (Coding Worker) | Reviewer (Review Worker) |
+|-----------|---------|--------------------------|--------------------------|
+| quality   | opus    | opus                     | opus                     |
+| balanced  | opus    | sonnet                   | sonnet                   |
+| budget    | sonnet  | sonnet                   | haiku                    |
 
-To check the current profile:
-```
-hv config model_profile
-hv config profiles.<profile_name>
+```bash
+hv config model_profile              # check current
+hv config profiles.<profile_name>    # see model assignments
+hv config --profile quality          # change profile
 ```
 
-To change the profile:
+## SendMessage for Retries
+
+When a worker needs to fix something, use **SendMessage** (not a fresh Agent spawn) to continue the same worker. This preserves the worker's context so it can fix efficiently:
+
 ```
-hv config model_profile quality
-```
-Or use the shortcut:
-```
-hv config --profile quality
+SendMessage to coding worker:
+  Your implementation has issues that need to be fixed:
+
+  ## Failed Criteria
+  - [FAIL] Rate limiting at 100 req/min — no rate limit code found
+
+  ## Test Failures
+  {test_output_if_applicable}
+
+  ## Review Feedback
+  {blocking_issues_if_applicable}
+
+  Please fix these specific issues.
 ```

@@ -100,6 +100,24 @@ class TestUpdateFrontmatter:
         with pytest.raises(ValueError, match="Invalid status"):
             update_frontmatter(fpath, {"status": "bogus"})
 
+    def test_update_to_blocked_succeeds(self, tmp_path: Path) -> None:
+        fpath = tmp_path / "task.md"
+        _write_task_file(fpath, _sample_frontmatter(), "body")
+
+        update_frontmatter(fpath, {"status": "blocked"})
+
+        result_fm, _ = parse_task(fpath)
+        assert result_fm["status"] == "blocked"
+
+    def test_update_to_cancelled_succeeds(self, tmp_path: Path) -> None:
+        fpath = tmp_path / "task.md"
+        _write_task_file(fpath, _sample_frontmatter(), "body")
+
+        update_frontmatter(fpath, {"status": "cancelled"})
+
+        result_fm, _ = parse_task(fpath)
+        assert result_fm["status"] == "cancelled"
+
     def test_file_not_found(self, tmp_path: Path) -> None:
         fpath = tmp_path / "missing.md"
         with pytest.raises(FileNotFoundError):
@@ -148,6 +166,12 @@ class TestValidateStatus:
     @pytest.mark.parametrize("status", VALID_STATUSES)
     def test_valid_statuses_pass(self, status: str) -> None:
         validate_status(status)  # should not raise
+
+    def test_blocked_status_is_valid(self) -> None:
+        validate_status("blocked")  # should not raise
+
+    def test_cancelled_status_is_valid(self) -> None:
+        validate_status("cancelled")  # should not raise
 
     def test_invalid_status_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid status"):

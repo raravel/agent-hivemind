@@ -1,124 +1,179 @@
-# Pipeline Stages -- Detailed Description
+# Pipeline Stages -- Orchestrator Model
 
-The `/hv:run-task` pipeline executes tasks through a sequence of stages. Each stage has specific inputs, outputs, and success criteria.
+The `/hv:task` pipeline uses an **orchestrator model**: the main context (orchestrator) delegates work to sub-agents but verifies results directly before proceeding.
 
 ## Overview
 
 ```
-[Fetch Task] -> [Coding] -> [Testing] -> [Review] -> [Complete]
-     |              |            |            |            |
-     v              v            v            v            v
-  hv run        Implement    Run tests    Review      hv task update
-  --format json  changes     Fix if fail  changes     --status done
+Orchestrator (main context)
+  │
+  ├── FETCH ──────────── hv run --format json
+  ├── READ_HARNESS ───── Read harness docs (orchestrator does this)
+  ├── DELEGATE_CODING ── Agent tool → coding worker
+  ├── VERIFY_CODE ────── Orchestrator reads git diff, checks criteria
+  ├── RUN_TESTS ──────── Orchestrator runs ruff/mypy/pytest via Bash
+  ├── DELEGATE_REVIEW ── Agent tool → review worker
+  ├── JUDGE_REVIEW ───── Orchestrator reads feedback, decides accept/reject
+  └── COMPLETE ───────── hv task update --status done + report + feedback
 ```
 
-## Stage 0: Task Fetch
+## Stage 0: FETCH
 
-**Purpose:** Select and load the next task for execution.
+**Actor:** Orchestrator
+**Purpose:** Select and load the next task.
 
-**Command:**
-```
+```bash
 hv run --format json -p <project>
 ```
 
-**Output:** JSON object containing:
-- `id`: Task identifier
-- `frontmatter`: Full task metadata (status, priority, depends_on, etc.)
-- `body`: Task description and requirements in markdown
-- `path`: File path to the task file
+**Output:** JSON with `id`, `frontmatter`, `body`, `path`.
+**Success:** Task returned (exit code 0).
+**Failure:** No tasks (exit code 1) — pipeline stops.
 
-**Success criteria:** A task is returned (exit code 0).
+Then: `hv task update <TASK-ID> --status in_progress`
 
-**Failure:** No tasks available (exit code 1) -- pipeline stops gracefully.
+## Stage 1: READ_HARNESS
 
-## Stage 1: Coding
-
-**Purpose:** Implement the code changes described in the task.
-
-**Model role:** `executor` (from active profile)
-
-**Inputs:**
-- Task body (requirements, acceptance criteria)
-- L1 knowledge context (via `hv search`)
-- Current codebase state
+**Actor:** Orchestrator (NEVER delegate this)
+**Purpose:** Understand the task context before delegating any work.
 
 **Process:**
-1. Parse the task body for requirements.
-2. Search for relevant knowledge: `hv search "<keywords>"`.
-3. Read relevant source files in the project.
-4. Implement the changes.
-5. Run `ruff check .` for linting.
-6. Run `mypy .` for type checking (if applicable).
+1. Read all documents listed in the task's **Spec References** section.
+2. Read `build-verify.md` for build/test commands.
+3. Read `rules.md` for constraints.
+4. Search L2 knowledge: `hv search "<task title keywords>"`.
 
-**Success criteria:**
-- Code changes are implemented.
-- Linting passes (or only pre-existing warnings).
-- Type checking passes (or only pre-existing errors).
+**Success:** Orchestrator has full understanding of what the task requires.
 
-**Failure handling:** Follow error escalation (see error-handling.md).
+## Stage 2: DELEGATE_CODING
 
-## Stage 2: Testing
+**Actor:** Coding Worker (via Agent tool, **executor** model)
+**Purpose:** Implement the code changes.
 
-**Purpose:** Verify that the changes work correctly and don't break existing functionality.
+**Worker receives:**
+- Task description and completion criteria
+- Harness document paths to read
+- Build/verify commands
+- Project rules
+- Relevant L2 lessons (if found)
 
-**Model role:** `executor` (from active profile)
+**Worker does:**
+1. Read the harness documents.
+2. Implement code changes.
+3. Run lint and type checks.
+4. Return results.
 
-**Inputs:**
-- Changes from Stage 1
-- Project's test suite
+**Worker does NOT:**
+- Mark the task as done or change status
+- Run the full test suite
+- Decide whether work is complete
 
-**Process:**
-1. Run the project's test suite (e.g., `pytest`, `npm test`).
-2. Analyze results.
-3. If tests fail due to the changes, fix and re-run (up to 2 retries).
-4. If tests fail due to pre-existing issues, note but do not block.
+## Stage 3: VERIFY_CODE
 
-**Success criteria:**
-- All tests pass, or
-- Only pre-existing test failures remain (not caused by this task's changes).
-
-**Failure handling:** Follow error escalation (see error-handling.md).
-
-## Stage 3: Code Review
-
-**Purpose:** Quality gate to catch issues before completing the task.
-
-**Model role:** `reviewer` (from active profile)
-
-**Inputs:**
-- All code changes from Stage 1 (diff)
-- Task requirements
-- Project conventions
+**Actor:** Orchestrator (NEVER delegate this)
+**Purpose:** Independently verify the coding worker's output.
 
 **Process:**
-1. Review all changed files.
-2. Check correctness, quality, security, performance, testing, conventions.
-3. If issues found: request changes with specific feedback.
-4. Coding agent addresses feedback and re-submits (up to 1 round).
-5. If review passes: approve.
+1. Run `git diff` and read the actual changes.
+2. Read each changed file.
+3. Parse the task's `## Completion Criteria` checklist.
+4. For each criterion, check if the code changes address it:
+   ```
+   [PASS] API endpoint returns 200 on POST /api/todos
+   [FAIL] Rate limiting at 100 req/min — no rate limit code found
+   ```
+5. If any criterion is `[FAIL]`:
+   - Use **SendMessage** to continue the same worker with specific failure details.
+   - Max 2 retries.
+   - If all retries exhausted → mark `blocked`.
 
-**Success criteria:**
-- Review approved (no blocking issues).
+**Success:** All criteria verified as `[PASS]`.
 
-**Failure handling:** Follow error escalation (see error-handling.md).
+## Stage 4: RUN_TESTS
 
-## Stage 4: Completion
+**Actor:** Orchestrator (NEVER delegate this)
+**Purpose:** Run the project's test suite and verify results directly.
 
-**Purpose:** Finalize the task and record execution metrics.
-
-**Commands:**
-```
-hv task update <TASK-ID> --status done
+**Process:**
+```bash
+ruff check src/ tests/        # lint
+mypy src/                      # type check
+pytest                         # test suite
 ```
 
-**Report contents** (saved to `_reports/{TASK-ID}-report.md`):
+1. Read the full test output (not just exit codes).
+2. Distinguish between new failures and pre-existing failures.
+3. If new failures exist:
+   - Use **SendMessage** to send test output to the coding worker.
+   - Worker fixes, orchestrator re-runs tests.
+   - Max 2 retries.
+   - If all retries exhausted → mark `blocked`.
 
+**Success:** All tests pass, or only pre-existing failures remain.
+
+## Stage 5: DELEGATE_REVIEW
+
+**Actor:** Review Worker (via Agent tool, **reviewer** model)
+**Purpose:** Code review with focus on quality and boundary mismatches.
+
+**Worker receives:**
+- Full `git diff` output
+- Harness document paths (architecture, rules)
+- Boundary mismatch checklist:
+  - API response shape matches calling code
+  - Function signatures match all call sites
+  - Type definitions match actual usage
+  - Config keys match what code reads
+  - Import paths resolve correctly
+- Instruction: categorize issues as **blocking** vs. **advisory**
+
+**Worker returns:** Structured review with categorized issues.
+
+## Stage 6: JUDGE_REVIEW
+
+**Actor:** Orchestrator (NEVER delegate this)
+**Purpose:** Read review feedback and make the accept/reject decision.
+
+**Process:**
+1. Read the review output.
+2. Categorize issues:
+   - **Blocking:** Must fix before completion.
+   - **Advisory:** Nice-to-have, can proceed without fixing.
+3. If blocking issues exist:
+   - Use **SendMessage** to send feedback to the coding worker.
+   - Worker fixes → orchestrator re-verifies (VERIFY_CODE) and re-tests (RUN_TESTS).
+   - Max 1 review round.
+   - If still blocking after 1 round → mark `blocked`.
+4. If only advisory or no issues → proceed.
+
+**Success:** No blocking issues remain.
+
+## Stage 7: COMPLETE
+
+**Actor:** Orchestrator
+**Purpose:** Finalize the task.
+
+**Prerequisites (ALL must be true):**
+- All completion criteria verified as `[PASS]`
+- All tests pass
+- Review has no blocking issues
+
+**Process:**
+1. `hv task update <TASK-ID> --status done`
+2. Write execution report to `_reports/{TASK-ID}-report.md`
+3. If non-trivial events occurred (retries > 0 or blocking review issues):
+   append `## Incident` section with forensic details (what broke / why / what fixed it)
+4. Do NOT invoke `/hv:feedback`. Do NOT ask user for confirmation.
+5. Proceed immediately to the next task.
+
+**Report format:**
 ```yaml
 ---
 task_id: PRJ-001
-completed_at: 2025-01-15T14:30:00Z
 duration_minutes: 12
-retries: 1
+coding_retries: 0
+test_retries: 1
+review_rounds: 0
 review_passed: true
 lint_failed: false
 ---
@@ -128,32 +183,60 @@ Brief description of what was implemented.
 
 ## Changes
 - file1.py: Added authentication middleware
-- file2.py: Updated route handlers
+
+## Verification
+- ruff check: passed
+- mypy: passed
+- pytest: 50 passed, 0 failed
 
 ## Notes
-Any additional observations or caveats.
+Any observations or caveats.
+
+## Incident
+_(Only present if retries > 0 or review had blocking issues)_
+
+### What broke
+- Test `test_auth_middleware` failed: expected 401, got 500
+
+### Why
+- Error handler was not registered before auth middleware in the pipeline
+
+### What fixed it
+- Moved error handler registration above auth middleware (retry 1 of 2)
 ```
 
-## Stage 5: Feedback Extraction
-
-**Purpose:** Capture lessons learned during execution for the knowledge base.
-
-**Process:**
-1. Review the execution for any notable patterns, gotchas, or reusable insights.
-2. Invoke `/hv:feedback` to save lessons to L2 documents.
-3. This step is optional -- only save feedback if there is genuinely useful knowledge.
+**On blocked tasks:**
+```bash
+hv task update <TASK-ID> --status blocked --reason "<what failed and why>"
+```
+Record incident in report, then proceed to the next task (do NOT stop the pipeline).
 
 ## Pipeline State Machine
 
+```mermaid
+stateDiagram-v2
+    [*] --> FETCH
+    FETCH --> READ_HARNESS
+    READ_HARNESS --> DELEGATE_CODING
+    DELEGATE_CODING --> VERIFY_CODE
+    VERIFY_CODE --> RUN_TESTS : all criteria PASS
+    VERIFY_CODE --> DELEGATE_CODING : criteria FAIL (retry)
+    VERIFY_CODE --> BLOCKED : retries exhausted
+    RUN_TESTS --> DELEGATE_REVIEW : tests pass
+    RUN_TESTS --> DELEGATE_CODING : tests fail (retry)
+    RUN_TESTS --> BLOCKED : retries exhausted
+    DELEGATE_REVIEW --> JUDGE_REVIEW
+    JUDGE_REVIEW --> COMPLETE : no blocking issues
+    JUDGE_REVIEW --> DELEGATE_CODING : blocking issues (fix round)
+    JUDGE_REVIEW --> BLOCKED : fix round exhausted
+    COMPLETE --> [*]
+    BLOCKED --> [*]
 ```
-IDLE -> FETCHING -> CODING -> TESTING -> REVIEWING -> COMPLETING -> IDLE
-                      |          |           |
-                      v          v           v
-                   RETRYING   RETRYING    RETRYING
-                      |          |           |
-                      v          v           v
-                   FIXING     FIXING      FIXING
-                      |          |           |
-                      v          v           v
-                  ESCALATING ESCALATING  ESCALATING -> BLOCKED
-```
+
+## Retry Summary
+
+| Stage | Max Retries | Method | On Exhaustion |
+|-------|-------------|--------|---------------|
+| VERIFY_CODE | 2 | SendMessage to coding worker | `blocked` |
+| RUN_TESTS | 2 | SendMessage to coding worker | `blocked` |
+| JUDGE_REVIEW | 1 | SendMessage to coding worker | `blocked` |

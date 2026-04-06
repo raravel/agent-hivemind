@@ -11,6 +11,8 @@ VALID_STATUSES: list[str] = [
     "in_progress",
     "in_review",
     "rejected",
+    "blocked",
+    "cancelled",
     "done",
 ]
 

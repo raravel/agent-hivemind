@@ -79,3 +79,13 @@ When saving new feedback via `hv feedback save`:
 3. If no match is found, a new document is created.
 
 This prevents duplicate lessons and reinforces frequently encountered patterns.
+
+## Origin Tagging
+
+When a lesson leads to a new rule being added to `rules.md`, the rule should include an HTML comment linking back to the L2 document:
+
+```markdown
+- NEVER store session tokens in localStorage <!-- origin: level2/backend/session-token-storage.md -->
+```
+
+This provides mechanical traceability from rules to the lessons that motivated them, without relying on AI-generated provenance. The feedback skill adds this comment when it updates rules.

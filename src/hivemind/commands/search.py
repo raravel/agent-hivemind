@@ -99,10 +99,15 @@ def _ensure_index(data_path: Path) -> dict[str, list[dict[str, object]]]:
 @click.argument("query")
 @click.option("--project", "-p", default=None, help="Project to search in.")
 @click.option(
+    "--category", "-c", default=None,
+    type=click.Choice(["frontend", "backend", "infra", "general"]),
+    help="Filter search to a specific L2 category.",
+)
+@click.option(
     "--auto-read", is_flag=True, default=False,
     help="Auto-read documents with >= 70%% relevance (increments hits).",
 )
-def search(query: str, project: str | None, auto_read: bool) -> None:
+def search(query: str, project: str | None, category: str | None, auto_read: bool) -> None:
     """Search the knowledge base.
 
     With --auto-read: documents >= 70%% relevance are read immediately
@@ -113,6 +118,15 @@ def search(query: str, project: str | None, auto_read: bool) -> None:
     """
     data_path = _resolve_data_path()
     index_data = _ensure_index(data_path)
+
+    # Filter by category before BM25 scoring
+    if category:
+        prefix = f"level2/{category}/"
+        index_data = dict(index_data)
+        index_data["docs"] = [
+            d for d in index_data.get("docs", [])
+            if str(d.get("path", "")).startswith(prefix)
+        ]
 
     results = bm25_search(query, index_data, top_k=10)
 

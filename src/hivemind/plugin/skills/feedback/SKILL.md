@@ -26,9 +26,11 @@ Review the current conversation for:
 - Patterns that worked well (or didn't)
 - Common pitfalls to avoid
 
-Compose a concise lesson with:
-- A clear, descriptive title (in English)
-- A body explaining what was learned, why it matters, and how to apply it
+Compose a concise lesson following the quality criteria in [references/lesson-quality-guide.md](references/lesson-quality-guide.md):
+- **Specific**: Name the exact technology, pattern, or API
+- **Actionable**: State what to do, not just what went wrong
+- **Contextual**: Explain when this applies
+- **Concise**: One paragraph, not an essay
 
 ### 2. Present the lesson to the user for confirmation
 
@@ -76,6 +78,7 @@ See [references/l2-format.md](references/l2-format.md) for the L2 document forma
 - NEVER write L2 documents in Korean. All titles and content must be in English.
 - NEVER manually create or edit L2 markdown files. Always use `hv feedback save` via Bash.
 - NEVER save trivial or obvious information. Focus on non-obvious lessons that future agents would benefit from.
+- When a saved lesson leads to adding a new rule in `rules.md`, tag the rule with origin: `<!-- origin: level2/category/slug.md -->`
 - ALWAYS include a clear, descriptive title that future searches can match against.
 - If the user declines to save, respect their decision and do NOT save.
 - When called from `/hv:run-task`, still present the lesson and ask for confirmation unless running in fully automated mode.

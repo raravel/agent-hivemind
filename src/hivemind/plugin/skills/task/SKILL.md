@@ -1,10 +1,10 @@
 ---
-description: "Execute tasks through the agent pipeline (coding, testing, code review). Use when the user says 'run task', 'execute task', or wants to start working on the next task."
+description: "Execute tasks through the orchestrator pipeline (delegate coding/review to workers, verify directly). Use when the user says 'run task', 'execute task', or wants to start working on the next task."
 ---
 
-# /hv:task -- Task execution pipeline
+# /hv:task -- Task execution pipeline (Orchestrator model)
 
-Orchestrates the full task execution pipeline: fetches the next task, runs a sequence of specialized agents (coder, tester, code reviewer), manages status transitions, and records execution reports.
+You are the **orchestrator**. You delegate work to sub-agents but **never trust their completion claims**. You pull results into your own context and verify directly before proceeding.
 
 ## When to use
 
@@ -12,43 +12,58 @@ Orchestrates the full task execution pipeline: fetches the next task, runs a seq
 - User runs `/hv:task` explicitly
 - Automated pipeline execution is needed
 
+## Execution Model
+
+```
+You (Orchestrator) ──┬── read harness docs yourself
+                     ├── spawn Coding Worker (Agent tool)
+                     ├── VERIFY: read git diff, check criteria yourself
+                     ├── RUN TESTS yourself (Bash)
+                     ├── spawn Review Worker (Agent tool)
+                     ├── JUDGE: read review output, decide yourself
+                     └── only YOU mark done
+```
+
+**Core principle**: Workers execute. You verify. You decide.
+
 ## Steps
+
+### 0. Check for unreviewed incidents (informational only)
+
+Before starting, check if previous task reports have unreviewed incidents:
+
+```bash
+grep -rl "## Incident" {data_path}/tasks/{project}/_reports/ 2>/dev/null | head -5
+```
+
+If any are found, show: **"N reports have unreviewed incidents. Run `/hv:feedback` to promote lessons."**
+
+This is informational only — do NOT block pipeline execution. Proceed immediately.
 
 ### 1. Fetch the next task
 
-Get the task to execute via `hv run`:
-```
+```bash
 hv run --format json
-```
-Or for a specific project:
-```
-hv run -p <project> --format json
-```
-Or a specific task:
-```
-hv run -t <TASK-ID> --format json
+# Or: hv run -p <project> --format json
+# Or: hv run -t <TASK-ID> --format json
 ```
 
-The command returns JSON with `id`, `frontmatter`, `body`, and `path`. If it exits with code 1, there are no tasks available -- stop.
+Returns JSON with `id`, `frontmatter`, `body`, and `path`. Exit code 1 = no tasks available — stop.
 
 ### 2. Mark task as in_progress
 
-```
+```bash
 hv task update <TASK-ID> --status in_progress
 ```
 
 ### 3. Load model profile
 
-Fetch the current model profile to determine which models to use for each agent role:
-```
+```bash
 hv config model_profile
-```
-Then load the profile details:
-```
 hv config profiles.<profile_name>
 ```
 
-This returns a JSON object like:
+Returns:
 ```json
 {
   "planner": "opus",
@@ -57,82 +72,220 @@ This returns a JSON object like:
 }
 ```
 
-See [references/agent-prompts.md](references/agent-prompts.md) for the prompt templates used for each role.
+- **executor** model → Coding Worker
+- **reviewer** model → Review Worker
 
-### 4. Load harness documents (MANDATORY)
+### 4. Read harness documents (YOU do this — MANDATORY)
 
-Before any implementation, read the harness documents referenced in the task body's **Spec References** section. These are in `{data_path}/projects/{project}/`:
+Before delegating ANYTHING, read the harness documents referenced in the task's **Spec References** section. These are in `{data_path}/projects/{project}/`:
 
-- `architecture.md` — module boundaries, data flow, design decisions
-- `tech-stack.md` — libraries, versions, usage patterns, project structure
-- `features/*.md` — detailed feature specs with API endpoints, data models, edge cases
-- `build-verify.md` — build commands, test commands, completion criteria
-- `rules.md` — NEVER/ALWAYS rules, constraints
+- `architecture.md` — module boundaries, data flow
+- `tech-stack.md` — libraries, versions, patterns
+- `features/*.md` — detailed feature specs
+- `build-verify.md` — build/test commands
+- `rules.md` — NEVER/ALWAYS constraints
 
-Read ALL referenced documents. These contain the detailed information needed to implement the task correctly (API signatures, library usage, data models, etc.).
+**You must understand the task fully before delegating.** This is not optional.
 
-### 5. Stage 1 -- Coding Agent
+### 5. Search knowledge base
 
-Using the **executor** model from the profile, execute the task implementation:
-
-- Use the harness documents as the primary source of truth for implementation details
-- Read the task body for completion criteria (the checklist that must pass)
-- Search for relevant L1 knowledge: `hv search "<task title keywords>"`
-- Implement the code changes
-- Run linting and type checks
-- Verify each completion criterion from the task body
-
-If the coding stage fails, follow the error escalation procedure in [references/error-handling.md](references/error-handling.md).
-
-### 6. Stage 2 -- Test Agent
-
-Using the **executor** model from the profile:
-
-- Run the project's test suite
-- If tests fail, attempt to fix (up to 2 retries)
-- If tests still fail after retries, escalate per [references/error-handling.md](references/error-handling.md)
-
-### 7. Stage 3 -- Code Review Agent
-
-Using the **reviewer** model from the profile:
-
-- Review all changes made during the coding stage
-- Check for code quality, security issues, and adherence to project conventions
-- If review fails, send feedback to the coding agent for revision (up to 1 retry)
-- If review passes, proceed to completion
-
-### 8. Mark task as done
-
+```bash
+hv search "<task title keywords>"
 ```
+
+If relevant L2 lessons are found, include them in the worker prompt.
+
+### 6. Spawn Coding Worker (Agent tool)
+
+Use the **Agent** tool to spawn a coding worker with the **executor** model.
+
+Construct the worker prompt with:
+- Task description and completion criteria (from the task body)
+- Harness document paths to read (list them explicitly)
+- Build/verify commands from `build-verify.md`
+- Project rules from `rules.md`
+- Any relevant L2 lessons from step 5
+
+Example Agent tool usage:
+```
+Agent tool:
+  model: <executor model from profile>
+  prompt: |
+    You are a coding worker. Implement the following task.
+
+    ## Task
+    <task description and completion criteria>
+
+    ## Harness Documents (READ THESE FIRST)
+    <list of file paths to read>
+
+    ## Build & Verify
+    <commands from build-verify.md>
+
+    ## Rules
+    <relevant rules from rules.md>
+
+    Implement the task. Run lint and type checks when done.
+    Do NOT mark the task as done — the orchestrator will do that.
+```
+
+Wait for the worker to return.
+
+### 7. Verify coding output (YOU do this — NEVER skip)
+
+After the worker returns, **do not trust its claim of completion**. Verify directly:
+
+1. **Read the diff**: Run `git diff` and read the actual changes
+2. **Read changed files**: Open and read each modified file
+3. **Check completion criteria**: For each `- [ ]` item in the task body:
+   - Determine if the code changes address this criterion
+   - Output a verification line:
+     ```
+     [PASS] API endpoint returns 200 on POST /api/todos
+     [FAIL] Rate limiting at 100 req/min — no rate limit code found
+     ```
+4. **If any criterion fails**: Use **SendMessage** to continue the same worker with specific failure details. The worker retains its context, so it can fix efficiently. Max 2 retries.
+
+### 8. Run tests (YOU do this — NEVER delegate)
+
+Run tests directly via Bash:
+
+```bash
+ruff check src/ tests/        # lint
+mypy src/                      # type check (if applicable)
+pytest                         # test suite
+```
+
+**Read the output yourself.** Do not rely on exit codes alone — read the actual test output to confirm what passed and what failed.
+
+If tests fail:
+1. Use **SendMessage** to send the test output to the coding worker
+2. Worker fixes, you re-run tests
+3. Max 2 test retries
+
+### 9. Spawn Review Worker (Agent tool)
+
+Use the **Agent** tool to spawn a review worker with the **reviewer** model.
+
+Construct the review prompt with:
+- The full `git diff` output
+- Harness document paths (architecture, rules)
+- Boundary mismatch checklist:
+  - API response shape matches calling code expectations
+  - Function signatures match all call sites
+  - Type definitions match actual usage
+  - Config keys match what code reads
+  - Import paths resolve correctly
+- Instruction: produce a structured review with blocking vs. advisory issues
+
+Wait for the worker to return.
+
+### 10. Judge review output (YOU do this — NEVER auto-accept)
+
+Read the review feedback yourself and categorize:
+
+- **Blocking issues**: Must be fixed before done
+- **Advisory issues**: Nice-to-have, can skip
+
+If blocking issues exist:
+1. Use **SendMessage** to send review feedback to the coding worker
+2. Worker fixes, you re-verify (step 7) and re-test (step 8)
+3. Max 1 review round
+
+If only advisory or no issues → proceed.
+
+### 11. Mark task as done
+
+Only after ALL of the following are true:
+- All completion criteria verified as [PASS]
+- All tests pass (you saw the output)
+- Review passed (no blocking issues)
+
+```bash
 hv task update <TASK-ID> --status done
 ```
 
-### 9. Record execution report
+### 12. Record execution report
 
-Save a report to `{data_path}/tasks/{project}/_reports/{TASK-ID}-report.md` with:
-- Task ID, duration, retries count
-- Whether review passed
-- Whether lint failed
-- Any error notes
+Write to `{data_path}/tasks/{project}/_reports/{TASK-ID}-report.md`:
 
-### 10. Extract feedback
+```markdown
+---
+task_id: <TASK-ID>
+duration_minutes: <estimated>
+coding_retries: <0-2>
+test_retries: <0-2>
+review_rounds: <0-1>
+review_passed: true|false
+lint_failed: true|false
+---
 
-Invoke `/hv:feedback` to capture any lessons learned during execution.
+## Summary
+<What was done>
 
-See [references/pipeline-stages.md](references/pipeline-stages.md) for detailed stage descriptions.
+## Changes
+<List of files changed>
+
+## Verification
+<Lint, type check, test results>
+
+## Notes
+<Any issues encountered>
+```
+
+### 13. Record incident observations (automatic — NO user confirmation)
+
+**Only if non-trivial events occurred** during this task:
+- `coding_retries > 0`
+- `test_retries > 0`
+- Review had blocking issues
+
+If ALL of the above are 0 (smooth execution), **skip this step entirely** and proceed to the next task.
+
+Otherwise, append a `## Incident` section to the execution report with **forensic framing**:
+
+```markdown
+## Incident
+
+### What broke
+- <Specific criterion, test, or review issue that failed>
+
+### Why
+- <Root cause from the failure context — what the worker missed or got wrong>
+
+### What fixed it
+- <The specific change that resolved it, on which retry>
+```
+
+**Do NOT invoke `/hv:feedback`.** Do NOT ask the user for confirmation. Do NOT save to L2 directly. The incident stays in the report file until the user reviews it.
+
+Proceed immediately to the next task.
+
+## Retry & Escalation
+
+| Stage | Max Retries | Method | On Exhaustion |
+|-------|-------------|--------|---------------|
+| Coding | 2 | SendMessage to same worker | Mark `blocked` with `--reason` |
+| Tests | 2 | SendMessage with test output | Mark `blocked` with `--reason` |
+| Review | 1 | SendMessage with review feedback | Mark `blocked` with `--reason` |
+
+If all retries are exhausted at any stage:
+```bash
+hv task update <TASK-ID> --status blocked --reason "<what failed and why>"
+```
+Record incident in report, then proceed to the next task (do NOT stop the pipeline).
 
 ## Important Rules
 
-- **NEVER start coding without reading the harness documents first.** Step 4 is mandatory.
+- **NEVER trust a worker's claim of completion.** Always verify yourself.
+- **NEVER start delegating without reading harness documents first.** Step 4 is mandatory.
+- **NEVER delegate test execution.** You run tests via Bash and read the output.
+- **NEVER auto-accept review.** You read review feedback and judge blocking vs. advisory.
+- **NEVER let a worker mark a task as done.** Only you do this.
 - ALWAYS use `hv run --format json` to get structured task data.
 - ALWAYS mark the task as `in_progress` before starting work.
-- ALWAYS mark the task as `done` only after all stages pass.
 - ALWAYS use the model profile from `hv config` for agent model selection. Do NOT hardcode models.
-- NEVER skip the code review stage.
-- NEVER mark a task as `done` if tests are failing.
-- If a task is blocked by failures after all retries, mark it as `blocked`:
-  ```
-  hv task update <TASK-ID> --status blocked
-  ```
-- ALWAYS use Bash tool to run `hv` CLI commands. Do NOT import Python modules directly.
+- ALWAYS use **SendMessage** to continue a worker (preserves context) rather than spawning a new one for retries.
+- If a task is blocked after all retries: `hv task update <TASK-ID> --status blocked`
+- ALWAYS use Bash tool to run `hv` CLI commands.
 - NEVER write reports or feedback in Korean. All content must be in English.
