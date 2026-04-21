@@ -1,4 +1,9 @@
-"""Hook installer — registers JS hooks in ~/.claude/settings.json."""
+"""Hook installer — registers Python hooks in ~/.claude/settings.json.
+
+Primary installation path is the plugin system (``install_plugin``), which
+copies ``hooks.json`` verbatim. This module supports the legacy code path
+that writes directly into ``settings.json`` for standalone installs.
+"""
 
 from __future__ import annotations
 
@@ -10,8 +15,10 @@ from typing import Any
 _HOOKS_DIR_DEFAULT = Path("~/.claude/hooks")
 _SETTINGS_DEFAULT = Path("~/.claude/settings.json")
 
-# Marker embedded in every hivemind hook path so we can detect duplicates.
+# Markers embedded in every hivemind hook path so we can detect duplicates.
+# Accept both legacy ``hv-*`` (JS) and current ``hv_*`` (Python) names.
 _HV_HOOK_PREFIX = "~/.claude/hooks/hv-"
+_HV_HOOK_MARKERS: tuple[str, ...] = ("~/.claude/hooks/hv-", "~/.claude/hooks/hv_")
 
 
 def _hook_ref_str(hook: str | dict[str, Any]) -> str:
@@ -31,6 +38,13 @@ def _hook_ref_str(hook: str | dict[str, Any]) -> str:
     return ""
 
 
+def _looks_like_hv_ref(s: str) -> bool:
+    """Return True if *s* references a hivemind-managed hook file."""
+    if any(s.startswith(m) for m in _HV_HOOK_MARKERS):
+        return True
+    return "/hv-" in s or "/hv_" in s
+
+
 def _is_hivemind_hook_entry(entry: str | dict[str, Any]) -> bool:
     """Return True if *entry* contains a hivemind-managed hook path.
 
@@ -38,9 +52,9 @@ def _is_hivemind_hook_entry(entry: str | dict[str, Any]) -> bool:
     plain-string entries that some settings.json variants use.
     """
     if isinstance(entry, str):
-        return entry.startswith(_HV_HOOK_PREFIX) or "/hv-" in entry
+        return _looks_like_hv_ref(entry)
     hooks_list: list[str | dict[str, Any]] = entry.get("hooks", [])
-    return any(_hook_ref_str(h).startswith(_HV_HOOK_PREFIX) or "/hv-" in _hook_ref_str(h) for h in hooks_list)
+    return any(_looks_like_hv_ref(_hook_ref_str(h)) for h in hooks_list)
 
 
 def _merge_hooks(
@@ -73,17 +87,23 @@ def _merge_hooks(
     return changed
 
 
+_PYTHON_HOOK_EVENT_MAP: dict[str, tuple[str, str]] = {
+    # filename stem -> (event_name, matcher)
+    "hv_pre_commit": ("PreToolUse", "Bash"),
+    "hv_session_log": ("PreCompact", ""),
+}
+
+
 def install_hooks(
     source_dir: Path,
     settings_path: Path | None = None,
 ) -> bool:
-    """Install hivemind hook JS files and register them in settings.json.
+    """Install hivemind Python hook files and register them in settings.json.
 
     Parameters
     ----------
     source_dir:
-        Directory containing ``.js`` hook files whose names start with
-        ``hv-`` (e.g. ``hv-pre-commit.js``).
+        Directory containing ``hv_*.py`` hook files.
     settings_path:
         Path to Claude ``settings.json``.
         Defaults to ``~/.claude/settings.json``.
@@ -96,34 +116,34 @@ def install_hooks(
     """
     if settings_path is None:
         settings_path = _SETTINGS_DEFAULT.expanduser()
-    else:
-        settings_path = settings_path  # caller already provides resolved path
 
     hooks_dir = settings_path.parent / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- Copy JS files -------------------------------------------------------
-    js_files: list[Path] = sorted(source_dir.glob("hv-*.js"))
-    for js_file in js_files:
-        dest = hooks_dir / js_file.name
-        shutil.copy2(js_file, dest)
+    # --- Copy Python hook files ---------------------------------------------
+    py_files: list[Path] = sorted(source_dir.glob("hv_*.py"))
+    for py_file in py_files:
+        dest = hooks_dir / py_file.name
+        shutil.copy2(py_file, dest)
+        try:
+            dest.chmod(0o755)
+        except OSError:
+            pass
 
-    # --- Build new hook entries from copied files ----------------------------
+    # --- Build new hook entries from copied files ---------------------------
     new_entries: dict[str, list[dict[str, Any]]] = {}
-    for js_file in js_files:
-        hook_ref = f"~/.claude/hooks/{js_file.name}"
-        # Derive event name from filename convention: hv-pre-commit.js -> PreToolUse
-        # For now, all hooks are registered under PreToolUse with Bash matcher.
-        event = "PreToolUse"
-        if event not in new_entries:
-            new_entries[event] = []
-        new_entries[event].append(
+    for py_file in py_files:
+        hook_ref = f"~/.claude/hooks/{py_file.name}"
+        event, matcher = _PYTHON_HOOK_EVENT_MAP.get(
+            py_file.stem, ("PreToolUse", "Bash")
+        )
+        new_entries.setdefault(event, []).append(
             {
-                "matcher": "Bash",
+                "matcher": matcher,
                 "hooks": [
                     {
                         "type": "command",
-                        "command": f"node {hook_ref}",
+                        "command": f"python3 {hook_ref}",
                         "timeout": 10,
                     }
                 ],

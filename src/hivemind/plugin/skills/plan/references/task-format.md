@@ -8,12 +8,13 @@ Task files are markdown documents stored in `{data_path}/tasks/{project}/{TASK-I
 ---
 id: PRJ-001
 title: "Implement user authentication"
-status: pending          # pending | in_progress | done | blocked | cancelled
-priority: high           # high | medium | low
-type: task               # epic | story | task | bug | chore
-parent: PRJ-000          # parent task ID (optional)
-depends_on:              # list of task IDs this depends on
+status: pending            # pending | in_progress | in_review | rejected | blocked | cancelled | done
+priority: high             # high | medium | low
+type: task                 # epic | story | task | bug | chore
+parent: PRJ-000            # parent task ID (optional)
+depends_on:                # list of task IDs this depends on
   - PRJ-000
+verification_required: true  # optional; default true. Set false to skip verify-first gate.
 created: 2025-01-15
 updated: 2025-01-15
 ---
@@ -48,8 +49,7 @@ Brief explanation of what this task implements and why.
 - [ ] POST /api/auth/login returns 200 with valid credentials
 - [ ] POST /api/auth/login returns 401 with invalid credentials
 - [ ] JWT token is stored in httpOnly cookie
-- [ ] `npm run lint` passes
-- [ ] `npm test` passes
+- [ ] All commands listed in `projects/{project}/verify.md` pass
 ```
 
 ### Completion Criteria Rules
@@ -61,7 +61,7 @@ Each criterion must be:
 
 Always include:
 - At least one **functional** criterion (what the code does)
-- At least one **build/lint** criterion (code quality gate)
+- One criterion pointing to `verify.md` (covers lint/type/test/build — project-defined)
 - **Integration** criteria if the task touches multiple modules
 
 ### Spec References
@@ -70,7 +70,7 @@ Link to harness documents that the task implementer should read:
 - `projects/{project}/architecture.md` — for module boundaries and data flow
 - `projects/{project}/tech-stack.md` — for library versions and usage patterns
 - `projects/{project}/features/*.md` — for detailed feature specs
-- `projects/{project}/build-verify.md` — for build and test commands
+- `projects/{project}/verify.md` — language-agnostic verification commands (fallback: `build-verify.md` for v2 projects)
 
 ## Fields
 
@@ -82,6 +82,7 @@ Link to harness documents that the task implementer should read:
 | `priority`  | string     | yes      | Execution priority                       |
 | `type`      | string     | yes      | Task category                            |
 | `depends_on`| list[str]  | no       | IDs of tasks that must be done first     |
+| `verification_required` | bool | no | When false, `/hv:task` skips the verify-first gate. Defaults to true. |
 | `created`   | date       | yes      | ISO date of creation                     |
 | `updated`   | date       | yes      | ISO date of last update                  |
 

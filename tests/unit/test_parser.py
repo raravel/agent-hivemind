@@ -14,6 +14,7 @@ from hivemind.core.parser import (
     update_frontmatter,
     validate_status,
     validate_task_frontmatter,
+    verification_required,
 )
 
 
@@ -196,3 +197,39 @@ class TestValidateTaskFrontmatter:
         fm["status"] = "bad"
         with pytest.raises(ValueError, match="Invalid status"):
             validate_task_frontmatter(fm)
+
+    def test_invalid_verification_required_type_raises(self) -> None:
+        fm = _sample_frontmatter()
+        fm["verification_required"] = "yes"  # not a bool
+        with pytest.raises(ValueError, match="verification_required"):
+            validate_task_frontmatter(fm)
+
+
+class TestVerificationRequired:
+    """Tests for verification_required()."""
+
+    def test_default_true(self) -> None:
+        fm = _sample_frontmatter()
+        fm["type"] = "task"
+        assert verification_required(fm) is True
+
+    def test_explicit_false_wins(self) -> None:
+        fm = _sample_frontmatter()
+        fm["verification_required"] = False
+        assert verification_required(fm) is False
+
+    def test_explicit_true_wins_even_for_chore(self) -> None:
+        fm = _sample_frontmatter()
+        fm["type"] = "chore"
+        fm["verification_required"] = True
+        assert verification_required(fm) is True
+
+    def test_chore_type_defaults_false(self) -> None:
+        fm = _sample_frontmatter()
+        fm["type"] = "chore"
+        assert verification_required(fm) is False
+
+    def test_bug_type_defaults_true(self) -> None:
+        fm = _sample_frontmatter()
+        fm["type"] = "bug"
+        assert verification_required(fm) is True

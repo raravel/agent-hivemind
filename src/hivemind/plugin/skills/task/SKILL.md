@@ -1,223 +1,273 @@
 ---
-description: "Execute tasks through the orchestrator pipeline (delegate coding/review to workers, verify directly). Use when the user says 'run task', 'execute task', or wants to start working on the next task."
+description: "Execute tasks through the orchestrator pipeline (delegate coding/review to workers in isolated worktrees, verify directly, judge on a 4-axis rubric). Use when the user says 'run task', 'execute task', or wants to start working on the next task. Pass --parallel to run ready tasks concurrently."
 ---
 
 # /hv:task -- Task execution pipeline (Orchestrator model)
 
-You are the **orchestrator**. You delegate work to sub-agents but **never trust their completion claims**. You pull results into your own context and verify directly before proceeding.
+You are the **orchestrator**. Workers run in isolated git worktrees. You never trust a worker's completion claim. You pull results into your own context, verify directly, judge reviews on a 4-axis rubric, and record tokens/cost per run.
 
 ## When to use
 
 - User says "run the next task", "execute task", "start working on tasks"
-- User runs `/hv:task` explicitly
-- Automated pipeline execution is needed
+- `/hv:task` or `/hv:task --sequential` — one ready task at a time
+- `/hv:task --parallel` — up to `parallel.max_concurrency` ready tasks concurrently (DAG-respecting)
 
-## Execution Model
+## Execution model
 
 ```
-You (Orchestrator) ──┬── read harness docs yourself
-                     ├── spawn Coding Worker (Agent tool)
-                     ├── VERIFY: read git diff, check criteria yourself
-                     ├── RUN TESTS yourself (Bash)
-                     ├── spawn Review Worker (Agent tool)
-                     ├── JUDGE: read review output, decide yourself
-                     └── only YOU mark done
+You (Orchestrator)
+  ├── fetch ready task(s) via `hv run --ready-only`
+  ├── read harness docs yourself (MANDATORY)
+  ├── verify-first gate: worker adds failing check; YOU confirm it fails
+  ├── spawn Coding Worker (Agent tool, isolation: "worktree")
+  ├── VERIFY: read diff, check criteria yourself
+  ├── RUN verification commands from verify.md (YOU, Bash)
+  ├── spawn Review Worker (Agent tool, isolation: "worktree")
+  ├── JUDGE: 4-axis rubric, blocking thresholds
+  ├── merge worker branch back, mark done, write report
+  └── record tokens + cost in report frontmatter
 ```
 
-**Core principle**: Workers execute. You verify. You decide.
+**Core principle**: Workers execute. You verify. You decide. You merge.
 
 ## Steps
 
-### 0. Check for unreviewed incidents (informational only)
+### 0. Preflight (informational only)
 
-Before starting, check if previous task reports have unreviewed incidents:
+Scan previous reports for unreviewed incidents:
 
 ```bash
 grep -rl "## Incident" {data_path}/tasks/{project}/_reports/ 2>/dev/null | head -5
 ```
 
-If any are found, show: **"N reports have unreviewed incidents. Run `/hv:feedback` to promote lessons."**
+If any are found, show: **"N reports have unreviewed incidents. Run `/hv:feedback` to promote lessons."** Informational only — do NOT block. Proceed immediately.
 
-This is informational only — do NOT block pipeline execution. Proceed immediately.
+### 1. Fetch ready task(s)
 
-### 1. Fetch the next task
+- **Sequential mode**: `hv run --format json` — returns the next ready task or exit 1.
+- **Parallel mode**: `hv run --ready-only --limit <N> --format json` — returns up to N ready tasks as a JSON array. N = `hv config parallel.max_concurrency` (default 2).
 
-```bash
-hv run --format json
-# Or: hv run -p <project> --format json
-# Or: hv run -t <TASK-ID> --format json
-```
+A "ready" task is `pending` AND all `depends_on` entries are `done`.
 
-Returns JSON with `id`, `frontmatter`, `body`, and `path`. Exit code 1 = no tasks available — stop.
+If no tasks are available (exit code 1 or empty array) — stop.
 
-### 2. Mark task as in_progress
+### 2. Mark task(s) as in_progress
+
+For each selected task:
 
 ```bash
 hv task update <TASK-ID> --status in_progress
 ```
 
-### 3. Load model profile
+### 3. Load model profile + pricing
 
 ```bash
 hv config model_profile
 hv config profiles.<profile_name>
+hv config pricing
 ```
 
-Returns:
-```json
-{
-  "planner": "opus",
-  "executor": "sonnet",
-  "reviewer": "sonnet"
-}
-```
-
-- **executor** model → Coding Worker
-- **reviewer** model → Review Worker
+Profile returns `{planner, executor, reviewer}` with concrete model IDs
+(e.g. `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5`).
+Pricing is a map of `model_id -> {input, output}` dollars per Mtoken. Keep both in context — you use pricing to estimate cost in the report.
 
 ### 4. Read harness documents (YOU do this — MANDATORY)
 
-Before delegating ANYTHING, read the harness documents referenced in the task's **Spec References** section. These are in `{data_path}/projects/{project}/`:
+Read docs in `{data_path}/projects/{project}/` referenced by the task's **Spec References**:
 
 - `architecture.md` — module boundaries, data flow
 - `tech-stack.md` — libraries, versions, patterns
 - `features/*.md` — detailed feature specs
-- `build-verify.md` — build/test commands
+- `verify.md` — verification commands (lint/type/test/build, project-defined)
+  — Fallback to `build-verify.md` (v2 name) if `verify.md` does not exist
 - `rules.md` — NEVER/ALWAYS constraints
 
-**You must understand the task fully before delegating.** This is not optional.
+**You must understand the task fully before delegating.** Not optional.
 
-### 5. Search knowledge base
+If neither `verify.md` nor `build-verify.md` exists: stop and ask the user to create `verify.md` describing the project's verification commands.
+
+### 5. Search the knowledge base
 
 ```bash
 hv search "<task title keywords>"
 ```
 
-If relevant L2 lessons are found, include them in the worker prompt.
+If relevant L2 lessons are found, include them in worker prompts.
 
-### 6. Spawn Coding Worker (Agent tool)
+### 6. Verification-first gate (TDD-style, language-agnostic)
 
-Use the **Agent** tool to spawn a coding worker with the **executor** model.
+**Applies unless** the task frontmatter has `verification_required: false` OR the task `type` is `chore`/`docs`.
 
-Construct the worker prompt with:
-- Task description and completion criteria (from the task body)
-- Harness document paths to read (list them explicitly)
-- Build/verify commands from `build-verify.md`
+The worker must add a **failing verification artifact** BEFORE writing implementation. The artifact is any executable check that fails in the current state and will pass when the task is done:
+
+- a unit/integration test that asserts the target behavior
+- a type check that the current code cannot satisfy
+- a runtime assertion or schema/contract check
+- an executable spec (e.g. OpenAPI conformance test)
+
+**Protocol**:
+
+1. Spawn the Coding Worker with **only this instruction first** (see step 7 for full spawn params):
+   > "Step A: add a failing verification artifact for this task. Do NOT write the implementation yet. Commit the artifact."
+2. Worker returns; read the diff — confirm an artifact was added (not just a stub).
+3. Run the verification commands from `verify.md`. Read the output yourself.
+4. **Gate**: the artifact MUST fail. If it passes, the worker has written implementation too — instruct via SendMessage: "revert implementation; keep only the failing check". Max 1 revert attempt before blocking.
+5. Once the failing check is confirmed, SendMessage to the worker: "Step B: implement the task. Make the verification artifact pass."
+
+Continue to step 7 with the same worker.
+
+### 7. Spawn Coding Worker (Agent tool)
+
+Use the **Agent** tool with these parameters:
+
+```
+Agent(
+  subagent_type: "general-purpose",
+  model: <executor from profile>,
+  isolation: "worktree",          # NEW: CC creates an isolated worktree
+  description: "Implement <TASK-ID>",
+  prompt: <see below>,
+)
+```
+
+Prompt contents:
+- Task description + completion criteria (from task body)
+- Harness document paths (explicit list, not "read the docs")
+- Verification commands from `verify.md` — worker runs these when done
 - Project rules from `rules.md`
-- Any relevant L2 lessons from step 5
+- Relevant L2 lessons from step 5
+- "Do NOT mark the task as done. Orchestrator handles that."
 
-Example Agent tool usage:
-```
-Agent tool:
-  model: <executor model from profile>
-  prompt: |
-    You are a coding worker. Implement the following task.
+Wait for the worker to return. CC returns the worktree path + branch name when changes are made.
 
-    ## Task
-    <task description and completion criteria>
+**Record usage**: when the Agent call returns, note the response length and your prompt length — you'll estimate tokens in step 13.
 
-    ## Harness Documents (READ THESE FIRST)
-    <list of file paths to read>
+### 8. Verify coding output (YOU do this — NEVER skip)
 
-    ## Build & Verify
-    <commands from build-verify.md>
+For each task:
 
-    ## Rules
-    <relevant rules from rules.md>
+1. **Pull the worker's changes into view**: the Agent result describes the worktree path. Read the diff via Bash: `git -C <worktree> diff <base>..HEAD`.
+2. **Read changed files**: for each modified file, read it to confirm the code actually exists.
+3. **Check completion criteria**: for each `- [ ]` in the task body, output a verification line:
+   ```
+   [PASS] API endpoint returns 200 on POST /api/todos
+   [FAIL] Rate limiting at 100 req/min — no rate limit code found
+   ```
+4. **On any [FAIL]**: SendMessage to the same worker with the failed criteria. Max 2 coding retries.
 
-    Implement the task. Run lint and type checks when done.
-    Do NOT mark the task as done — the orchestrator will do that.
-```
+### 9. Run verification commands (YOU do this — NEVER delegate)
 
-Wait for the worker to return.
-
-### 7. Verify coding output (YOU do this — NEVER skip)
-
-After the worker returns, **do not trust its claim of completion**. Verify directly:
-
-1. **Read the diff**: Run `git diff` and read the actual changes
-2. **Read changed files**: Open and read each modified file
-3. **Check completion criteria**: For each `- [ ]` item in the task body:
-   - Determine if the code changes address this criterion
-   - Output a verification line:
-     ```
-     [PASS] API endpoint returns 200 on POST /api/todos
-     [FAIL] Rate limiting at 100 req/min — no rate limit code found
-     ```
-4. **If any criterion fails**: Use **SendMessage** to continue the same worker with specific failure details. The worker retains its context, so it can fix efficiently. Max 2 retries.
-
-### 8. Run tests (YOU do this — NEVER delegate)
-
-Run tests directly via Bash:
+Read the command list from `verify.md` (or `build-verify.md` fallback) and run each via Bash **in the worker's worktree**:
 
 ```bash
-ruff check src/ tests/        # lint
-mypy src/                      # type check (if applicable)
-pytest                         # test suite
+# Example (but read the exact commands from verify.md):
+git -C <worktree> exec -- <command-from-verify.md>
 ```
 
-**Read the output yourself.** Do not rely on exit codes alone — read the actual test output to confirm what passed and what failed.
+Or `cd <worktree> && <command>`.
 
-If tests fail:
-1. Use **SendMessage** to send the test output to the coding worker
-2. Worker fixes, you re-run tests
-3. Max 2 test retries
+Read the output yourself. Do not trust exit codes alone. If the verification artifact from step 6 now passes and any pre-existing checks still pass → success.
 
-### 9. Spawn Review Worker (Agent tool)
+If checks fail:
+1. SendMessage to the coding worker with the failing output.
+2. Worker fixes. Re-run. Max 2 verification retries.
 
-Use the **Agent** tool to spawn a review worker with the **reviewer** model.
+### 10. Spawn Review Worker (Agent tool)
 
-Construct the review prompt with:
-- The full `git diff` output
+```
+Agent(
+  subagent_type: "general-purpose",
+  model: <reviewer from profile>,
+  isolation: "worktree",
+  description: "Review <TASK-ID>",
+  prompt: <see below>,
+)
+```
+
+Prompt contents:
+- The full `git diff` of the worker's branch
 - Harness document paths (architecture, rules)
-- Boundary mismatch checklist:
-  - API response shape matches calling code expectations
-  - Function signatures match all call sites
-  - Type definitions match actual usage
-  - Config keys match what code reads
-  - Import paths resolve correctly
-- Instruction: produce a structured review with blocking vs. advisory issues
+- Boundary-mismatch checklist (API/type/import consistency)
+- **Instruction**: "Output a structured review with two sections:
+  1. `Findings` — list each issue with severity (blocking|advisory).
+  2. `Rubric` — score each axis 0–10 and explain each score in one sentence:
+     - `correctness`
+     - `spec_compliance`
+     - `safety`
+     - `clarity`
+  Return the review as plain markdown."
 
 Wait for the worker to return.
 
-### 10. Judge review output (YOU do this — NEVER auto-accept)
+### 11. Judge review output (YOU do this — 4-axis rubric)
 
-Read the review feedback yourself and categorize:
+Read the review worker's output. Extract the four rubric scores. Apply blocking thresholds:
 
-- **Blocking issues**: Must be fixed before done
-- **Advisory issues**: Nice-to-have, can skip
+| Axis | Range | Block if |
+|------|-------|----------|
+| correctness | 0–10 | `< 7` |
+| spec_compliance | 0–10 | `< 7` |
+| safety | 0–10 | `< 8` |
+| clarity | 0–10 | advisory only |
 
-If blocking issues exist:
-1. Use **SendMessage** to send review feedback to the coding worker
-2. Worker fixes, you re-verify (step 7) and re-test (step 8)
-3. Max 1 review round
+If any axis is below its blocking threshold, OR the `Findings` section lists a `blocking` item:
+1. SendMessage to the coding worker with the review output.
+2. Worker fixes. Re-verify (step 8) and re-run verification (step 9).
+3. Max 1 review round.
 
-If only advisory or no issues → proceed.
+Record `review_scores` and `blocking_issues` for step 13.
 
-### 11. Mark task as done
+### 12. Merge worker branch + mark done
 
-Only after ALL of the following are true:
-- All completion criteria verified as [PASS]
-- All tests pass (you saw the output)
-- Review passed (no blocking issues)
+Merge the worker's branch into the main branch of the project repo (single worktree merge for sequential; one-at-a-time for parallel):
+
+```bash
+git -C <project_root> merge <worker-branch> --squash --no-commit
+git -C <project_root> status
+# Orchestrator reviews staged changes, then commits
+git -C <project_root> commit -m "task: <TASK-ID> <title>"
+```
+
+Then:
 
 ```bash
 hv task update <TASK-ID> --status done
 ```
 
-### 12. Record execution report
+Only proceed to step 12 after ALL of:
+- Every completion criterion marked [PASS]
+- All verification commands pass
+- 4-axis rubric has no blocking scores and no blocking Findings
+
+### 13. Record execution report
 
 Write to `{data_path}/tasks/{project}/_reports/{TASK-ID}-report.md`:
 
 ```markdown
 ---
 task_id: <TASK-ID>
+completed_at: <ISO timestamp>
 duration_minutes: <estimated>
 coding_retries: <0-2>
-test_retries: <0-2>
+verify_retries: <0-2>
 review_rounds: <0-1>
-review_passed: true|false
-lint_failed: true|false
+verification_required: <true|false>
+verification_passed: <true|false>
+blocking_issues: <true|false>
+review_scores:
+  correctness: <0-10>
+  spec_compliance: <0-10>
+  safety: <0-10>
+  clarity: <0-10>
+tokens:
+  estimated: true
+  input: <N>
+  output: <N>
+cost_usd: <0.XX>
+profile: <quality|balanced|budget>
+models:
+  executor: <model-id>
+  reviewer: <model-id>
 ---
 
 ## Summary
@@ -227,65 +277,126 @@ lint_failed: true|false
 <List of files changed>
 
 ## Verification
-<Lint, type check, test results>
+<Commands run + results>
+
+## Review
+<Summary of review findings + rubric explanations>
 
 ## Notes
 <Any issues encountered>
 ```
 
-### 13. Record incident observations (automatic — NO user confirmation)
+**Token estimation** (no exact CC usage API — approximate):
+- `input_tokens ≈ ceil(len(prompt_chars) / 3.5)` for every Agent call
+- `output_tokens ≈ ceil(len(response_chars) / 3.5)`
+- Sum across all Agent calls for this task (coding worker round-trips + review worker)
 
-**Only if non-trivial events occurred** during this task:
+**Cost**:
+- For each model used, `cost = (input_tokens / 1_000_000) * pricing[model].input + (output_tokens / 1_000_000) * pricing[model].output`
+- Sum across models → `cost_usd`, rounded to 2 decimal places
+
+### 14. Incident section (conditional, automatic)
+
+Append a `## Incident` section ONLY if any of:
 - `coding_retries > 0`
-- `test_retries > 0`
-- Review had blocking issues
-
-If ALL of the above are 0 (smooth execution), **skip this step entirely** and proceed to the next task.
-
-Otherwise, append a `## Incident` section to the execution report with **forensic framing**:
+- `verify_retries > 0`
+- `review_rounds > 0` with blocking scores or findings
 
 ```markdown
 ## Incident
 
 ### What broke
-- <Specific criterion, test, or review issue that failed>
+- <Specific criterion, check, or review issue that failed>
 
 ### Why
-- <Root cause from the failure context — what the worker missed or got wrong>
+- <Root cause from the failure context>
 
 ### What fixed it
 - <The specific change that resolved it, on which retry>
 ```
 
-**Do NOT invoke `/hv:feedback`.** Do NOT ask the user for confirmation. Do NOT save to L2 directly. The incident stays in the report file until the user reviews it.
+**Do NOT invoke `/hv:feedback` or save to L2.** Let the user review and promote later.
 
-Proceed immediately to the next task.
+### 15. Auto-draft lesson candidates (same trigger as incident)
+
+When step 14 produced an Incident section, extract **0–3 reusable-lesson candidates** and pipe each to `hv feedback draft-add`. The CLI enforces a quality gate — rejected candidates are not saved.
+
+For each candidate:
+1. Title (one phrase, ≤120 chars) naming the technology and the fix.
+2. Content between 50 and 500 chars. It MUST:
+   - Name a concrete technology, library, file path, or identifier (not "the API" — use the real name).
+   - Use an action verb (`use`, `avoid`, `set`, `add`, `wrap`, `configure`, `prefer`, `always`, `never`, ...).
+   - Explain WHY (one sentence) so the lesson survives context loss.
+3. Avoid restating task-specific details that will not reuse. If you cannot phrase the lesson without the original bug's variable names, it is not reusable — skip it.
+4. **Choose a `--target`** (REQUIRED):
+
+   | Target | When to use | Example |
+   |---|---|---|
+   | `rules` | NEVER/ALWAYS rule that applies specifically to THIS project | "NEVER import from `src/legacy/` — scheduled for removal in Q3" |
+   | `tech-stack` | Library version / compat / upgrade decision tied to THIS project's stack | "Pin `python-frontmatter==1.1.0` until #42 fixes stdin handling" |
+   | `architecture` | Module boundary / dependency-direction constraint for THIS project | "`hivemind.core` must not import from `hivemind.commands`" |
+   | `L2` | Generic, reusable across projects | "FastAPI CORSMiddleware must precede custom middleware — preflight bypasses routes" |
+
+   **Rule of thumb**: if the lesson names *this project's* files/modules/policies → harness target. If it names a *public library behavior* the same way any project would → `L2`.
+
+Pipe it:
+
+```bash
+cat <<EOF | hv feedback draft-add -p <project> --task <TASK-ID> \
+  --title "<title>" --target <L2|rules|tech-stack|architecture>
+<content body>
+EOF
+```
+
+- Exit 0 → draft saved under `_reports/{TASK-ID}-lessons-draft.json`.
+- Exit 1 → gate rejected it (stderr has the reason). Try once to fix the reason; if still rejected, skip and do NOT work around the gate.
+
+**Do NOT promote drafts yourself.** The user invokes `hv feedback promote-drafts -p <project>` later to confirm, override the target, or reject each one. L2 goes through BM25 dedup; harness targets append a dated bullet under `## Learned rules/patterns/constraints`.
+
+### 16. Next task
+
+Proceed immediately to the next task:
+- Sequential: go back to step 1.
+- Parallel: wait for the next worker notification; when one completes, do steps 8–14 for it; after merge, call `hv run --ready-only` again to pick up newly-ready tasks; exit when no more ready tasks and all in-flight workers have returned.
+
+## Parallel-mode specifics
+
+1. `hv run --ready-only --limit N --format json` returns up to N ready tasks.
+2. For each task, spawn Agent with both `run_in_background: true` AND `isolation: "worktree"`.
+3. You receive completion notifications from the runtime. Collect workers as they finish; **serialize steps 8–12** (verify + run checks + review + merge) to avoid conflicting merges.
+4. After each merge, call `hv run --ready-only` again to pick up tasks that are now ready.
+5. Stop when no more ready tasks and no in-flight workers.
+
+If `parallel.max_concurrency = 1` or `--sequential` is passed: fall back to the sequential flow.
 
 ## Retry & Escalation
 
-| Stage | Max Retries | Method | On Exhaustion |
-|-------|-------------|--------|---------------|
-| Coding | 2 | SendMessage to same worker | Mark `blocked` with `--reason` |
-| Tests | 2 | SendMessage with test output | Mark `blocked` with `--reason` |
-| Review | 1 | SendMessage with review feedback | Mark `blocked` with `--reason` |
+| Stage | Max | Method | On exhaustion |
+|-------|-----|--------|---------------|
+| Verify-first gate | 1 | SendMessage "revert impl, keep failing check" | Block task |
+| Coding | 2 | SendMessage to same worker | Block |
+| Verification | 2 | SendMessage with output | Block |
+| Review | 1 | SendMessage with review | Block |
 
-If all retries are exhausted at any stage:
+Blocked task:
 ```bash
 hv task update <TASK-ID> --status blocked --reason "<what failed and why>"
 ```
-Record incident in report, then proceed to the next task (do NOT stop the pipeline).
+Record incident in report, proceed to next task (do NOT stop the pipeline).
 
 ## Important Rules
 
-- **NEVER trust a worker's claim of completion.** Always verify yourself.
-- **NEVER start delegating without reading harness documents first.** Step 4 is mandatory.
-- **NEVER delegate test execution.** You run tests via Bash and read the output.
-- **NEVER auto-accept review.** You read review feedback and judge blocking vs. advisory.
-- **NEVER let a worker mark a task as done.** Only you do this.
-- ALWAYS use `hv run --format json` to get structured task data.
-- ALWAYS mark the task as `in_progress` before starting work.
-- ALWAYS use the model profile from `hv config` for agent model selection. Do NOT hardcode models.
-- ALWAYS use **SendMessage** to continue a worker (preserves context) rather than spawning a new one for retries.
-- If a task is blocked after all retries: `hv task update <TASK-ID> --status blocked`
-- ALWAYS use Bash tool to run `hv` CLI commands.
-- NEVER write reports or feedback in Korean. All content must be in English.
+- **NEVER trust a worker's completion claim.** Verify yourself.
+- **NEVER read task body before reading harness docs.** Step 4 is mandatory.
+- **NEVER hardcode language-specific build/test commands.** Always load from `verify.md`.
+- **NEVER skip verify-first gate** for normal task types. Override requires explicit `verification_required: false` in task frontmatter, or type in `chore`/`docs`.
+- **NEVER spawn workers without `isolation: "worktree"`.**
+- **NEVER auto-accept a review.** Apply the 4-axis rubric and blocking thresholds.
+- **NEVER let a worker mark a task as done.** Only you do this, and only after merge.
+- **ALWAYS** use `hv run --format json` (sequential) or `hv run --ready-only --limit N` (parallel) for structured task data.
+- **ALWAYS** mark task `in_progress` before starting work.
+- **ALWAYS** use the model IDs from `hv config profiles.<profile>`. Do NOT hardcode.
+- **ALWAYS** use **SendMessage** to continue a worker (preserves worktree + context).
+- **ALWAYS** estimate tokens and compute cost for the report. Use `hv config pricing`.
+- **ALWAYS** run `hv` CLI commands via the Bash tool.
+- **NEVER** write reports or feedback in Korean. English only for BM25 consistency.

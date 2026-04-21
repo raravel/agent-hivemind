@@ -43,7 +43,9 @@ def _make_plugin_source(base: Path, *, skills: list[str] | None = None, hooks: b
         hooks_dir = src / "hooks"
         hooks_dir.mkdir(parents=True, exist_ok=True)
         (hooks_dir / "hooks.json").write_text("{}", encoding="utf-8")
-        (hooks_dir / "hv-pre-commit.js").write_text("// hook", encoding="utf-8")
+        (hooks_dir / "hv_pre_commit.py").write_text(
+            "#!/usr/bin/env python3\n", encoding="utf-8"
+        )
 
     return src
 
@@ -127,7 +129,7 @@ class TestRunInstallers:
         )
 
         assert isinstance(summary["skills"], list)
-        assert "hook:hv-pre-commit" in summary["skills"]
+        assert "hook:hv_pre_commit" in summary["skills"]
 
     @mock.patch("hivemind.installer.skills._run_claude_cmd", return_value=(True, "ok"))
     def test_profiles_installed(self, mock_cmd: mock.MagicMock, tmp_path: Path) -> None:

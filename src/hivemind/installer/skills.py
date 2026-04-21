@@ -66,9 +66,10 @@ def install_plugin(
             if skill.is_dir() and (skill / "SKILL.md").exists():
                 installed.append(f"/hv:{skill.name}")
 
-    hooks_json = target_dir / "hooks" / "hooks.json"
-    if hooks_json.exists():
-        installed.append("hook:hv-pre-commit")
+    hooks_dir = target_dir / "hooks"
+    if (hooks_dir / "hooks.json").exists():
+        for hook_py in sorted(hooks_dir.glob("hv_*.py")):
+            installed.append(f"hook:{hook_py.stem}")
 
     return installed
 

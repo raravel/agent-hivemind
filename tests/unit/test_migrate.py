@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from hivemind.commands.migrate import detect_v1, migrate_v1_to_v2, print_migration_summary
+from hivemind.commands.migrate import (
+    detect_v1,
+    migrate_v1_to_v2,
+    migrate_v2_to_v3,
+    print_migration_summary,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -254,3 +259,239 @@ class TestPrintMigrationSummary:
         captured = capsys.readouterr()
         assert "Updated:" in captured.out
         assert ".hivemind.json" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# v2 -> v3 migration
+# ---------------------------------------------------------------------------
+
+
+def _make_v2_data(tmp_path: Path) -> Path:
+    """Create a minimal v2 data directory (version 2.0.0)."""
+    data = tmp_path / "data"
+    data.mkdir()
+    _write_config(
+        data,
+        {
+            "version": "2.0.0",
+            "data_path": str(data),
+            "profiles": {
+                "quality": {"planner": "opus", "executor": "opus", "reviewer": "opus"},
+                "balanced": {"planner": "opus", "executor": "sonnet", "reviewer": "sonnet"},
+                "budget": {"planner": "sonnet", "executor": "sonnet", "reviewer": "haiku"},
+            },
+            "projects": {"demo": {"prefix": "DM", "linked_path": str(tmp_path / "demo")}},
+        },
+    )
+    (data / "level1").mkdir()
+    (data / "level2").mkdir()
+    (data / "level3" / "demo").mkdir(parents=True)
+    (data / "projects" / "demo").mkdir(parents=True)
+    (data / "tasks" / "demo").mkdir(parents=True)
+    # Legacy build-verify.md
+    (data / "projects" / "demo" / "build-verify.md").write_text(
+        "npm test\n", encoding="utf-8"
+    )
+    # Per-prompt L3 log
+    (data / "level3" / "demo" / "20260101_abc123.md").write_text(
+        "# Session Log\n", encoding="utf-8"
+    )
+    return data
+
+
+class TestMigrateV3Config:
+    """Tests for the .hivemind.json portion of the v3 migration."""
+
+    def test_version_bumped(self, tmp_path: Path) -> None:
+        data = _make_v2_data(tmp_path)
+        migrate_v2_to_v3(data, backup=False, claude_settings=tmp_path / "none.json")
+        cfg = json.loads((data / ".hivemind.json").read_text(encoding="utf-8"))
+        assert cfg["version"] == "3.0.0"
+
+    def test_short_model_aliases_upgraded(self, tmp_path: Path) -> None:
+        data = _make_v2_data(tmp_path)
+        migrate_v2_to_v3(data, backup=False, claude_settings=tmp_path / "none.json")
+        cfg = json.loads((data / ".hivemind.json").read_text(encoding="utf-8"))
+        assert cfg["profiles"]["balanced"]["executor"] == "claude-sonnet-4-6"
+        assert cfg["profiles"]["budget"]["reviewer"] == "claude-haiku-4-5"
+
+    def test_pricing_added(self, tmp_path: Path) -> None:
+        data = _make_v2_data(tmp_path)
+        migrate_v2_to_v3(data, backup=False, claude_settings=tmp_path / "none.json")
+        cfg = json.loads((data / ".hivemind.json").read_text(encoding="utf-8"))
+        assert "pricing" in cfg
+        assert "claude-opus-4-7" in cfg["pricing"]
+
+    def test_parallel_section_seeded(self, tmp_path: Path) -> None:
+        data = _make_v2_data(tmp_path)
+        migrate_v2_to_v3(data, backup=False, claude_settings=tmp_path / "none.json")
+        cfg = json.loads((data / ".hivemind.json").read_text(encoding="utf-8"))
+        assert cfg["parallel"]["max_concurrency"] == 2
+
+    def test_idempotent(self, tmp_path: Path) -> None:
+        data = _make_v2_data(tmp_path)
+        migrate_v2_to_v3(data, backup=False, claude_settings=tmp_path / "none.json")
+        summary = migrate_v2_to_v3(
+            data, backup=False, claude_settings=tmp_path / "none.json"
+        )
+        assert summary["config"] == [] or summary["config"] == [
+            # verify_md / link normalization may have minor no-op output; config itself is stable
+        ]
+
+
+class TestMigrateV3VerifyMd:
+    """Tests for build-verify.md -> verify.md rename."""
+
+    def test_renamed(self, tmp_path: Path) -> None:
+        data = _make_v2_data(tmp_path)
+        summary = migrate_v2_to_v3(
+            data, backup=False, claude_settings=tmp_path / "none.json"
+        )
+        assert not (data / "projects" / "demo" / "build-verify.md").exists()
+        assert (data / "projects" / "demo" / "verify.md").exists()
+        assert any("verify.md" in x for x in summary["verify_md_renamed"])
+
+    def test_no_clobber_when_verify_md_exists(self, tmp_path: Path) -> None:
+        data = _make_v2_data(tmp_path)
+        (data / "projects" / "demo" / "verify.md").write_text(
+            "pre-existing verify\n", encoding="utf-8"
+        )
+        migrate_v2_to_v3(data, backup=False, claude_settings=tmp_path / "none.json")
+        # build-verify.md stays put if verify.md was already there
+        assert (data / "projects" / "demo" / "build-verify.md").exists()
+        # verify.md content preserved
+        content = (data / "projects" / "demo" / "verify.md").read_text(encoding="utf-8")
+        assert "pre-existing verify" in content
+
+
+class TestMigrateV3L3Archive:
+    """Tests for L3 per-prompt log archival."""
+
+    def test_archived(self, tmp_path: Path) -> None:
+        data = _make_v2_data(tmp_path)
+        summary = migrate_v2_to_v3(
+            data, backup=False, claude_settings=tmp_path / "none.json"
+        )
+        assert summary["l3_archived"] >= 1
+        archive = data / "level3" / "_archive_v2" / "demo"
+        assert archive.exists()
+        assert any(archive.iterdir())
+
+
+class TestMigrateV3LinkFile:
+    """Tests for .hivemind-link.json path normalization."""
+
+    def test_windows_path_normalized(self, tmp_path: Path) -> None:
+        data = _make_v2_data(tmp_path)
+        project_dir = tmp_path / "demo"
+        project_dir.mkdir()
+        # Simulate a Windows-style stored path on a POSIX machine
+        (project_dir / ".hivemind-link.json").write_text(
+            json.dumps(
+                {
+                    "project": "demo",
+                    "data_path": "C:\\Users\\ifthe\\agent-hivemind-data",
+                }
+            ),
+            encoding="utf-8",
+        )
+        migrate_v2_to_v3(
+            data,
+            project_dirs=[project_dir],
+            backup=False,
+            claude_settings=tmp_path / "none.json",
+        )
+        link = json.loads(
+            (project_dir / ".hivemind-link.json").read_text(encoding="utf-8")
+        )
+        assert "C:" not in link["data_path"]
+        assert "\\" not in link["data_path"]
+
+
+class TestMigrateV3ClaudeMd:
+    """Tests for CLAUDE.md legacy cleanup + @import insertion."""
+
+    def test_obsidian_import_removed(self, tmp_path: Path) -> None:
+        data = _make_v2_data(tmp_path)
+        project_dir = tmp_path / "demo"
+        project_dir.mkdir()
+        (project_dir / ".hivemind-link.json").write_text(
+            json.dumps({"project": "demo", "data_path": str(data)}), encoding="utf-8"
+        )
+        (project_dir / "CLAUDE.md").write_text(
+            'obsidian-import "00_Projects/foo"\n\n# Hivemind Project\n',
+            encoding="utf-8",
+        )
+        migrate_v2_to_v3(
+            data,
+            project_dirs=[project_dir],
+            backup=False,
+            claude_settings=tmp_path / "none.json",
+        )
+        content = (project_dir / "CLAUDE.md").read_text(encoding="utf-8")
+        assert "obsidian-import" not in content
+
+    def test_at_imports_added(self, tmp_path: Path) -> None:
+        data = _make_v2_data(tmp_path)
+        project_dir = tmp_path / "demo"
+        project_dir.mkdir()
+        (project_dir / ".hivemind-link.json").write_text(
+            json.dumps({"project": "demo", "data_path": str(data)}), encoding="utf-8"
+        )
+        (project_dir / "CLAUDE.md").write_text(
+            "# Hivemind Project\n- project: demo\n", encoding="utf-8"
+        )
+        migrate_v2_to_v3(
+            data,
+            project_dirs=[project_dir],
+            backup=False,
+            claude_settings=tmp_path / "none.json",
+        )
+        content = (project_dir / "CLAUDE.md").read_text(encoding="utf-8")
+        assert "@" in content
+        assert "architecture.md" in content
+        assert "rules.md" in content
+
+
+class TestMigrateV3NodeHooks:
+    """Tests for legacy JS hook removal from settings.json."""
+
+    def test_js_entries_removed(self, tmp_path: Path) -> None:
+        data = _make_v2_data(tmp_path)
+        settings = tmp_path / "settings.json"
+        settings.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PreToolUse": [
+                            {
+                                "matcher": "Bash",
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "node ~/.claude/hooks/hv-pre-commit.js",
+                                    }
+                                ],
+                            }
+                        ],
+                        "UserPromptSubmit": [
+                            {
+                                "matcher": "",
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "node ~/.claude/hooks/hv-session-log.js",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        summary = migrate_v2_to_v3(data, backup=False, claude_settings=settings)
+        assert summary["node_hook_entries_removed"] == 2
+        after = json.loads(settings.read_text(encoding="utf-8"))
+        assert after["hooks"]["PreToolUse"] == []
+        assert after["hooks"]["UserPromptSubmit"] == []

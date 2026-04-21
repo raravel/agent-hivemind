@@ -36,10 +36,18 @@ Create these files by writing directly to the filesystem:
    - Project structure (directory layout)
    - Configuration files needed
 
-3. **`build-verify.md`** — Build commands, test commands, CI pipeline
-   - How to install dependencies
-   - How to run dev server, tests, linter
-   - Completion criteria for the entire project
+3. **`verify.md`** — Verification commands (language-agnostic)
+   - **What the orchestrator runs to confirm a task is complete.**
+   - Any executable command is fine: lint, type check, unit test, integration test, build, smoke test, schema validation, contract test, etc.
+   - Group commands by stage (`lint`, `type`, `test`, `build`) when the project distinguishes them; otherwise one `check` stage is enough.
+   - Each entry: the command string + what it proves (one sentence).
+   - Examples:
+     - Python project: `ruff check .` / `mypy src/` / `pytest -q`
+     - Node project: `npm run lint` / `npm run typecheck` / `npm test`
+     - Go project: `go vet ./...` / `go test ./...`
+     - Any language: project-defined scripts like `make check`, `./scripts/verify.sh`
+   - NEVER assume a language. The project's verify.md is the single source of truth for what "done" means operationally.
+   - Legacy: `build-verify.md` is accepted as a fallback for v2 projects. New projects use `verify.md`.
 
 4. **`rules.md`** — NEVER/ALWAYS rules, forbidden files, constraints
    - Security rules, coding conventions

@@ -32,7 +32,7 @@ def _make_workspace(
         }
 
     config_data = {
-        "version": "2.0.0",
+        "version": "3.0.0",
         "data_path": str(data_path),
         "projects": projects,
     }
@@ -193,3 +193,51 @@ class TestNoTasksAvailable:
         result = _invoke_run(tmp_path, ["--project", "other"])
         assert result.exit_code == 1
         assert "No tasks available" in result.output
+
+
+class TestReadyOnly:
+    """Tests for --ready-only (DAG parallel orchestration)."""
+
+    def test_returns_array_of_ready_tasks(self, tmp_path: Path) -> None:
+        _make_workspace(tmp_path)
+        _invoke_task(tmp_path, ["create", "-p", "myproj", "-t", "Task A", "--priority", "high"])
+        _invoke_task(tmp_path, ["create", "-p", "myproj", "-t", "Task B", "--priority", "medium"])
+
+        result = _invoke_run(tmp_path, ["--ready-only", "--format", "json"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert len(data) == 2
+        # High priority first
+        assert data[0]["frontmatter"]["title"] == "Task A"
+
+    def test_respects_depends_on(self, tmp_path: Path) -> None:
+        _make_workspace(tmp_path)
+        _invoke_task(tmp_path, ["create", "-p", "myproj", "-t", "Root", "--priority", "low"])
+        _invoke_task(
+            tmp_path,
+            ["create", "-p", "myproj", "-t", "Child", "--priority", "high", "--depends", "MP-001"],
+        )
+
+        result = _invoke_run(tmp_path, ["--ready-only", "--format", "json"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        # Only root is ready; child is blocked by dependency
+        assert len(data) == 1
+        assert data[0]["frontmatter"]["title"] == "Root"
+
+    def test_limit_caps_results(self, tmp_path: Path) -> None:
+        _make_workspace(tmp_path)
+        for i in range(5):
+            _invoke_task(tmp_path, ["create", "-p", "myproj", "-t", f"T{i}"])
+
+        result = _invoke_run(tmp_path, ["--ready-only", "--limit", "2", "--format", "json"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert len(data) == 2
+
+    def test_empty_returns_empty_array_and_exit_1(self, tmp_path: Path) -> None:
+        _make_workspace(tmp_path)
+        result = _invoke_run(tmp_path, ["--ready-only", "--format", "json"])
+        assert result.exit_code == 1
+        assert result.output.strip() == "[]"

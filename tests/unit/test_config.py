@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from hivemind.core.config import HivemindConfig, default_config
+from hivemind.core.config import (
+    HivemindConfig,
+    data_path_for_storage,
+    default_config,
+    normalize_data_path,
+)
 
 
 class TestDefaultConfig:
@@ -19,7 +24,7 @@ class TestDefaultConfig:
 
     def test_version(self) -> None:
         cfg = default_config()
-        assert cfg["version"] == "2.0.0"
+        assert cfg["version"] == "3.0.0"
 
     def test_has_all_top_level_keys(self) -> None:
         cfg = default_config()
@@ -30,10 +35,32 @@ class TestDefaultConfig:
             "auto_commit",
             "model_profile",
             "profiles",
+            "pricing",
+            "parallel",
             "projects",
             "filter_patterns",
         }
         assert set(cfg.keys()) == expected_keys
+
+    def test_profiles_use_concrete_model_ids(self) -> None:
+        cfg = default_config()
+        for profile in cfg["profiles"].values():
+            for role in ("planner", "executor", "reviewer"):
+                model_id = profile[role]
+                assert model_id.startswith("claude-"), model_id
+                assert "-4-" in model_id, model_id
+
+    def test_pricing_has_all_models(self) -> None:
+        cfg = default_config()
+        # Every model ID referenced in profiles must have pricing defined
+        pricing_models = set(cfg["pricing"].keys())
+        for profile in cfg["profiles"].values():
+            for role in ("planner", "executor", "reviewer"):
+                assert profile[role] in pricing_models
+
+    def test_parallel_default_concurrency(self) -> None:
+        cfg = default_config()
+        assert cfg["parallel"]["max_concurrency"] == 2
 
     def test_profiles_contain_three(self) -> None:
         cfg = default_config()
@@ -45,6 +72,14 @@ class TestDefaultConfig:
             assert "planner" in profile, f"{name} missing planner"
             assert "executor" in profile, f"{name} missing executor"
             assert "reviewer" in profile, f"{name} missing reviewer"
+
+    def test_balanced_uses_sonnet_executor(self) -> None:
+        cfg = default_config()
+        assert cfg["profiles"]["balanced"]["executor"] == "claude-sonnet-4-6"
+
+    def test_budget_uses_haiku(self) -> None:
+        cfg = default_config()
+        assert cfg["profiles"]["budget"]["reviewer"] == "claude-haiku-4-5"
 
     def test_projects_empty(self) -> None:
         cfg = default_config()
@@ -102,17 +137,17 @@ class TestGetSet:
 
     def test_get_top_level(self, tmp_path: Path) -> None:
         cfg = self._make_config(tmp_path)
-        assert cfg.get("version") == "2.0.0"
+        assert cfg.get("version") == "3.0.0"
 
     def test_get_nested(self, tmp_path: Path) -> None:
         cfg = self._make_config(tmp_path)
         result = cfg.get("profiles.balanced")
         assert isinstance(result, dict)
-        assert result["executor"] == "sonnet"
+        assert result["executor"] == "claude-sonnet-4-6"
 
     def test_get_deeply_nested(self, tmp_path: Path) -> None:
         cfg = self._make_config(tmp_path)
-        assert cfg.get("profiles.balanced.planner") == "opus"
+        assert cfg.get("profiles.balanced.planner") == "claude-opus-4-7"
 
     def test_get_missing_returns_none(self, tmp_path: Path) -> None:
         cfg = self._make_config(tmp_path)
@@ -129,8 +164,8 @@ class TestGetSet:
 
     def test_set_nested(self, tmp_path: Path) -> None:
         cfg = self._make_config(tmp_path)
-        cfg.set("profiles.balanced.executor", "opus")
-        assert cfg.get("profiles.balanced.executor") == "opus"
+        cfg.set("profiles.balanced.executor", "claude-opus-4-7")
+        assert cfg.get("profiles.balanced.executor") == "claude-opus-4-7"
 
     def test_set_creates_intermediate_keys(self, tmp_path: Path) -> None:
         cfg = self._make_config(tmp_path)
@@ -203,3 +238,59 @@ class TestDataPath:
     def test_default_data_path(self, tmp_path: Path) -> None:
         cfg = HivemindConfig(tmp_path / ".hivemind.json", default_config())
         assert cfg.data_path.name == "agent-hivemind-data"
+
+    def test_foreign_windows_path_falls_back_to_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("sys.platform", "darwin")
+        data = default_config()
+        data["data_path"] = "C:\\Users\\ifthe\\agent-hivemind-data"
+        cfg = HivemindConfig(tmp_path / ".hivemind.json", data)
+        # Should fall back to ~/agent-hivemind-data, not the Windows string
+        assert cfg.data_path.name == "agent-hivemind-data"
+        assert "C:" not in str(cfg.data_path)
+
+
+class TestNormalizeDataPath:
+    """Tests for the normalize_data_path helper."""
+
+    def test_expands_tilde(self) -> None:
+        result = normalize_data_path("~/agent-hivemind-data")
+        assert "~" not in str(result)
+        assert result.is_absolute()
+
+    def test_none_returns_default(self) -> None:
+        result = normalize_data_path(None)
+        assert result.name == "agent-hivemind-data"
+
+    def test_empty_returns_default(self) -> None:
+        result = normalize_data_path("")
+        assert result.name == "agent-hivemind-data"
+
+    def test_foreign_windows_on_posix_falls_back(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("sys.platform", "linux")
+        result = normalize_data_path("C:\\Users\\x\\agent-hivemind-data")
+        assert "C:" not in str(result)
+
+
+class TestDataPathForStorage:
+    """Tests for data_path_for_storage()."""
+
+    def test_posix_separator(self, tmp_path: Path) -> None:
+        result = data_path_for_storage(tmp_path / "sub" / "data")
+        assert "\\" not in result
+
+    def test_home_relative_prefix(self) -> None:
+        home = Path.home()
+        inside = home / "agent-hivemind-data"
+        result = data_path_for_storage(inside)
+        assert result.startswith("~/")
+
+    def test_outside_home_is_absolute(self, tmp_path: Path) -> None:
+        # tmp_path is typically outside home; if it happens to be inside, skip
+        if tmp_path.resolve().is_relative_to(Path.home().resolve()):
+            pytest.skip("tmp_path resides under HOME on this runner")
+        result = data_path_for_storage(tmp_path / "data")
+        assert not result.startswith("~/")

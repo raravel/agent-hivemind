@@ -6,20 +6,20 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/hv-pre-commit.js",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hv_pre_commit.py",
             "timeout": 10
           }
         ]
       }
     ],
-    "UserPromptSubmit": [
+    "PreCompact": [
       {
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/hv-session-log.js",
-            "timeout": 5,
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hv_session_log.py",
+            "timeout": 10,
             "async": true
           }
         ]
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/hv-session-log.js",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/hv_session_log.py",
             "timeout": 10,
             "async": true
           }

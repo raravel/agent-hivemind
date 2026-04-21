@@ -39,7 +39,7 @@ Then: `hv task update <TASK-ID> --status in_progress`
 
 **Process:**
 1. Read all documents listed in the task's **Spec References** section.
-2. Read `build-verify.md` for build/test commands.
+2. Read `verify.md` (or `build-verify.md` as legacy fallback) for the project's verification commands.
 3. Read `rules.md` for constraints.
 4. Search L2 knowledge: `hv search "<task title keywords>"`.
 

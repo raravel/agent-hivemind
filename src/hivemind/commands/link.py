@@ -8,7 +8,7 @@ from pathlib import Path
 
 import click
 
-from hivemind.core.config import HivemindConfig
+from hivemind.core.config import HivemindConfig, data_path_for_storage
 from hivemind.core.git import auto_commit
 
 
@@ -96,7 +96,7 @@ def link_project(
     # 1. Create .hivemind-link.json in project root
     link_data = {
         "project": resolved_name,
-        "data_path": str(data_path),
+        "data_path": data_path_for_storage(data_path),
     }
     link_file.write_text(
         json.dumps(link_data, indent=2, ensure_ascii=False) + "\n",
@@ -131,10 +131,15 @@ def link_project(
 
     hivemind_marker = "# Hivemind Project"
     if hivemind_marker not in existing_content:
+        posix_data_path = data_path_for_storage(data_path)
+        project_spec_root = f"{posix_data_path}/projects/{resolved_name}"
         import_block = (
             f"\n\n{hivemind_marker}\n"
             f"- project: {resolved_name}\n"
-            f"- data_path: {data_path}\n"
+            f"- data_path: {posix_data_path}\n"
+            f"\n"
+            f"@{project_spec_root}/architecture.md\n"
+            f"@{project_spec_root}/rules.md\n"
         )
         claude_md.write_text(
             existing_content + import_block, encoding="utf-8"

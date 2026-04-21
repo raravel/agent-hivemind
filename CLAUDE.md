@@ -1,6 +1,6 @@
-obsidian-import "00_Projects/08_HarnessEngineering"
-
-
 # Hivemind Project
 - project: agent-hivemind
-- data_path: C:\Users\ifthe\agent-hivemind-data
+- data_path: ~/agent-hivemind-data
+
+@~/agent-hivemind-data/projects/agent-hivemind/architecture.md
+@~/agent-hivemind-data/projects/agent-hivemind/rules.md

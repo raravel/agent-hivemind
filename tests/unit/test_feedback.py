@@ -356,3 +356,578 @@ class TestSlugify:
         long_title = "a" * 100
         result = _slugify(long_title)
         assert len(result) <= 60
+
+
+# ---------------------------------------------------------------------------
+# Quality gate + draft lifecycle
+# ---------------------------------------------------------------------------
+
+
+from hivemind.commands.feedback import (  # noqa: E402
+    _draft_path,
+    _load_draft_file,
+    _save_draft_file,
+    quality_gate,
+)
+
+
+class TestQualityGate:
+    """Tests for the auto-draft quality gate."""
+
+    def test_accepts_actionable_specific_lesson(self, tmp_path: Path) -> None:
+        data_path = _make_data_dir(tmp_path)
+        ok, reason = quality_gate(
+            "FastAPI CORS preflight needs OPTIONS handler",
+            "When FastAPI returns 405 on OPTIONS requests, always add CORSMiddleware "
+            "with allow_methods=['*'] before custom middleware. Preflight checks "
+            "bypass the main routes and rely on the middleware chain.",
+            data_path,
+        )
+        assert ok, reason
+
+    def test_rejects_empty_title(self, tmp_path: Path) -> None:
+        data_path = _make_data_dir(tmp_path)
+        ok, reason = quality_gate(
+            "", "body must be long enough and contain actionable guidance for pytest fixtures.", data_path
+        )
+        assert not ok
+        assert "title" in reason
+
+    def test_rejects_too_short_content(self, tmp_path: Path) -> None:
+        data_path = _make_data_dir(tmp_path)
+        ok, reason = quality_gate("Some title", "short", data_path)
+        assert not ok
+        assert "too vague" in reason
+
+    def test_rejects_too_long_content(self, tmp_path: Path) -> None:
+        data_path = _make_data_dir(tmp_path)
+        ok, reason = quality_gate(
+            "Some title",
+            "x " * 400 + "FastAPI use always",
+            data_path,
+        )
+        assert not ok
+        assert "split or shorten" in reason
+
+    def test_rejects_no_action_verb(self, tmp_path: Path) -> None:
+        data_path = _make_data_dir(tmp_path)
+        ok, reason = quality_gate(
+            "Generic statement about FastAPI",
+            "The FastAPI framework has a CORSMiddleware and the preflight requests "
+            "might not work in certain circumstances sometimes maybe possibly.",
+            data_path,
+        )
+        assert not ok
+        assert "action verb" in reason
+
+    def test_rejects_no_tech_token(self, tmp_path: Path) -> None:
+        data_path = _make_data_dir(tmp_path)
+        ok, reason = quality_gate(
+            "Generic advice",
+            "Always add more stuff and use the thing and the other thing to ensure it works.",
+            data_path,
+        )
+        assert not ok
+        assert "tech token" in reason
+
+    def test_rejects_near_duplicate(self, tmp_path: Path) -> None:
+        data_path = _make_data_dir(tmp_path)
+        body = (
+            "When FastAPI returns 405 on OPTIONS requests, always add CORSMiddleware "
+            "with allow_methods=['*'] before custom middleware. Preflight checks "
+            "bypass the main routes and rely on the middleware chain."
+        )
+        _create_l2_doc(
+            data_path, "backend", "fastapi-cors.md", "FastAPI CORS", body
+        )
+        # Rebuild index so find_similar sees the doc
+        from hivemind.core.indexer import build_index, save_index
+
+        idx = build_index(data_path)
+        save_index(idx, data_path / "index.json")
+
+        ok, reason = quality_gate(
+            "FastAPI CORS preflight needs OPTIONS handler",
+            body,
+            data_path,
+        )
+        assert not ok
+        assert "duplicate" in reason
+
+
+class TestDraftStorage:
+    """Tests for draft file load/save."""
+
+    def test_draft_path_shape(self, tmp_path: Path) -> None:
+        p = _draft_path(tmp_path, "demo", "PRJ-003")
+        assert p.name == "PRJ-003-lessons-draft.json"
+        assert "_reports" in p.parts
+
+    def test_load_empty_returns_default(self, tmp_path: Path) -> None:
+        p = _draft_path(tmp_path, "demo", "PRJ-001")
+        data = _load_draft_file(p)
+        assert data["drafts"] == []
+        assert data["task_id"] == "PRJ-001"
+
+    def test_roundtrip(self, tmp_path: Path) -> None:
+        p = _draft_path(tmp_path, "demo", "PRJ-001")
+        data = {
+            "task_id": "PRJ-001",
+            "created": "2026-04-21",
+            "drafts": [{"title": "t", "category": "backend", "content": "c", "status": "pending"}],
+        }
+        _save_draft_file(p, data)
+        loaded = _load_draft_file(p)
+        assert loaded == data
+
+    def test_malformed_file_returns_default(self, tmp_path: Path) -> None:
+        p = _draft_path(tmp_path, "demo", "PRJ-001")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{{not json", encoding="utf-8")
+        data = _load_draft_file(p)
+        assert data["drafts"] == []
+
+
+# ---------------------------------------------------------------------------
+# CLI integration: draft-add and promote-drafts
+# ---------------------------------------------------------------------------
+
+
+from click.testing import CliRunner  # noqa: E402
+
+from hivemind.commands.feedback import feedback as _feedback_group  # noqa: E402
+
+
+def _setup_config(tmp_path: Path) -> Path:
+    data_path = _make_data_dir(tmp_path)
+    (data_path / "tasks" / "demo" / "_reports").mkdir(parents=True, exist_ok=True)
+    cfg = {
+        "version": "3.0.0",
+        "data_path": str(data_path),
+        "projects": {"demo": {"prefix": "DM", "linked_path": str(tmp_path), "counter": 0}},
+    }
+    (tmp_path / ".hivemind.json").write_text(
+        json.dumps(cfg, indent=2), encoding="utf-8"
+    )
+    return data_path
+
+
+class TestDraftAddCLI:
+    def test_accept_and_persist(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        data_path = _setup_config(tmp_path)
+
+        content = (
+            "When FastAPI returns 405 on OPTIONS requests, always add CORSMiddleware "
+            "with allow_methods=['*'] before custom middleware. Preflight checks "
+            "bypass the main routes and rely on the middleware chain."
+        )
+        content_file = tmp_path / "content.txt"
+        content_file.write_text(content, encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group,
+            [
+                "draft-add",
+                "-p",
+                "demo",
+                "--task",
+                "DM-001",
+                "--title",
+                "FastAPI CORS preflight handler",
+                "-c",
+                str(content_file),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        draft_file = data_path / "tasks" / "demo" / "_reports" / "DM-001-lessons-draft.json"
+        assert draft_file.exists()
+        data = json.loads(draft_file.read_text(encoding="utf-8"))
+        assert len(data["drafts"]) == 1
+        assert data["drafts"][0]["status"] == "pending"
+
+    def test_reject_vague_content(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        _setup_config(tmp_path)
+        content_file = tmp_path / "content.txt"
+        content_file.write_text("short", encoding="utf-8")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group,
+            [
+                "draft-add",
+                "-p",
+                "demo",
+                "--task",
+                "DM-001",
+                "--title",
+                "T",
+                "-c",
+                str(content_file),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "too vague" in (result.output + (result.stderr or ""))
+
+
+class TestPromoteDraftsCLI:
+    def _add_draft(self, tmp_path: Path, data_path: Path, title: str, content: str) -> None:
+        content_file = tmp_path / f"{title}.txt"
+        content_file.write_text(content, encoding="utf-8")
+        runner = CliRunner()
+        runner.invoke(
+            _feedback_group,
+            [
+                "draft-add",
+                "-p",
+                "demo",
+                "--task",
+                "DM-001",
+                "--title",
+                title,
+                "-c",
+                str(content_file),
+            ],
+        )
+
+    def test_auto_promote_creates_l2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        data_path = _setup_config(tmp_path)
+        self._add_draft(
+            tmp_path,
+            data_path,
+            "FastAPI CORS preflight handler",
+            "When FastAPI returns 405 on OPTIONS requests, always add CORSMiddleware "
+            "with allow_methods=['*'] before custom middleware. Preflight checks "
+            "bypass the main routes and rely on the middleware chain.",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group, ["promote-drafts", "-p", "demo", "--auto"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "L2=1" in result.output
+
+        # L2 doc exists
+        level2 = data_path / "level2"
+        found = list(level2.rglob("*.md"))
+        assert found, "no L2 doc created"
+
+        # Draft marked promoted
+        draft_file = (
+            data_path / "tasks" / "demo" / "_reports" / "DM-001-lessons-draft.json"
+        )
+        data = json.loads(draft_file.read_text(encoding="utf-8"))
+        assert data["drafts"][0]["status"] == "promoted"
+
+    def test_no_drafts_is_noop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _setup_config(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group, ["promote-drafts", "-p", "demo", "--auto"]
+        )
+        assert result.exit_code == 0
+        assert "No pending drafts" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Target routing (A)
+# ---------------------------------------------------------------------------
+
+
+from hivemind.commands.feedback import (  # noqa: E402
+    _append_to_harness_doc,
+    _normalize_target,
+    VALID_TARGETS,
+)
+
+
+class TestNormalizeTarget:
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            (None, "L2"),
+            ("", "L2"),
+            ("l2", "L2"),
+            ("L2", "L2"),
+            ("rules", "rules"),
+            ("rules.md", "rules"),
+            ("RULES", "rules"),
+            ("tech-stack", "tech-stack"),
+            ("tech_stack", "tech-stack"),
+            ("techstack", "tech-stack"),
+            ("architecture", "architecture"),
+            ("arch", "architecture"),
+            ("garbage", "L2"),
+        ],
+    )
+    def test_normalization(self, raw: str | None, expected: str) -> None:
+        assert _normalize_target(raw) == expected
+
+    def test_all_valid_targets_declared(self) -> None:
+        assert set(VALID_TARGETS) == {"L2", "rules", "tech-stack", "architecture"}
+
+
+class TestAppendToHarnessDoc:
+    def _setup(self, tmp_path: Path, project: str = "demo") -> Path:
+        data_path = tmp_path
+        spec = data_path / "projects" / project
+        spec.mkdir(parents=True, exist_ok=True)
+        return data_path
+
+    def test_creates_file_and_section_when_missing(self, tmp_path: Path) -> None:
+        data_path = self._setup(tmp_path)
+        path, appended = _append_to_harness_doc(
+            data_path, "demo", "rules", "NEVER write to /tmp", "DM-001", "2026-04-21"
+        )
+        assert appended is True
+        text = path.read_text(encoding="utf-8")
+        assert "## Learned rules" in text
+        assert "- [LEARNED 2026-04-21 from DM-001] NEVER write to /tmp" in text
+
+    def test_appends_under_existing_section(self, tmp_path: Path) -> None:
+        data_path = self._setup(tmp_path)
+        rules_path = data_path / "projects" / "demo" / "rules.md"
+        rules_path.write_text(
+            "# Rules\n\n## Learned rules\n\n- previous entry\n", encoding="utf-8"
+        )
+        _, appended = _append_to_harness_doc(
+            data_path, "demo", "rules", "NEVER import legacy", "DM-002", "2026-04-22"
+        )
+        assert appended
+        text = rules_path.read_text(encoding="utf-8")
+        assert "- previous entry" in text
+        assert "NEVER import legacy" in text
+
+    def test_inserts_before_next_heading(self, tmp_path: Path) -> None:
+        data_path = self._setup(tmp_path)
+        rules_path = data_path / "projects" / "demo" / "rules.md"
+        rules_path.write_text(
+            "# Rules\n\n## Learned rules\n\n- old\n\n## Other\n\nfollowup\n",
+            encoding="utf-8",
+        )
+        _, appended = _append_to_harness_doc(
+            data_path, "demo", "rules", "NEVER commit secrets", "T1", "2026-01-01"
+        )
+        assert appended
+        text = rules_path.read_text(encoding="utf-8")
+        idx_bullet = text.index("NEVER commit secrets")
+        idx_other = text.index("## Other")
+        # New bullet inserted BEFORE the Other heading
+        assert idx_bullet < idx_other
+
+    def test_dedupes_exact_content(self, tmp_path: Path) -> None:
+        data_path = self._setup(tmp_path)
+        body = "NEVER import from legacy/"
+        _, first = _append_to_harness_doc(
+            data_path, "demo", "rules", body, "DM-001", "2026-04-21"
+        )
+        _, second = _append_to_harness_doc(
+            data_path, "demo", "rules", body, "DM-002", "2026-04-22"
+        )
+        assert first is True
+        assert second is False  # duplicate rejected
+
+    def test_tech_stack_uses_patterns_section(self, tmp_path: Path) -> None:
+        data_path = self._setup(tmp_path)
+        path, _ = _append_to_harness_doc(
+            data_path,
+            "demo",
+            "tech-stack",
+            "Pin python-frontmatter==1.1.0",
+            "DM-003",
+            "2026-04-21",
+        )
+        assert "## Learned patterns" in path.read_text(encoding="utf-8")
+
+    def test_architecture_uses_constraints_section(self, tmp_path: Path) -> None:
+        data_path = self._setup(tmp_path)
+        path, _ = _append_to_harness_doc(
+            data_path,
+            "demo",
+            "architecture",
+            "core must not import from commands",
+            "DM-004",
+            "2026-04-21",
+        )
+        assert "## Learned constraints" in path.read_text(encoding="utf-8")
+
+
+class TestDraftAddWithTarget:
+    def test_target_persisted(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        data_path = _setup_config(tmp_path)
+        content_file = tmp_path / "c.txt"
+        content_file.write_text(
+            "NEVER import from src/legacy/ in FastAPI routers — scheduled for removal.",
+            encoding="utf-8",
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group,
+            [
+                "draft-add",
+                "-p",
+                "demo",
+                "--task",
+                "DM-001",
+                "--title",
+                "NEVER import from legacy in routers",
+                "-c",
+                str(content_file),
+                "--target",
+                "rules",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        draft_file = (
+            data_path / "tasks" / "demo" / "_reports" / "DM-001-lessons-draft.json"
+        )
+        data = json.loads(draft_file.read_text(encoding="utf-8"))
+        assert data["drafts"][0]["target"] == "rules"
+
+    def test_legacy_draft_without_target_defaults_L2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        data_path = _setup_config(tmp_path)
+        # Manually write a v1 draft (no target field)
+        draft_dir = data_path / "tasks" / "demo" / "_reports"
+        draft_dir.mkdir(parents=True, exist_ok=True)
+        legacy = {
+            "task_id": "DM-001",
+            "created": "2026-04-20",
+            "drafts": [
+                {
+                    "title": "Legacy entry",
+                    "category": "backend",
+                    "content": "Something useful about FastAPI",
+                    "status": "pending",
+                }
+            ],
+        }
+        (draft_dir / "DM-001-lessons-draft.json").write_text(
+            json.dumps(legacy), encoding="utf-8"
+        )
+
+        # promote-drafts --auto should treat the missing target as L2 and run
+        # through the L2 path
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group, ["promote-drafts", "-p", "demo", "--auto"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "L2=1" in result.output
+
+
+class TestPromoteTargetRouting:
+    def _add(
+        self,
+        tmp_path: Path,
+        task_id: str,
+        title: str,
+        content: str,
+        target: str,
+    ) -> None:
+        f = tmp_path / f"{title.replace(' ', '_')}.txt"
+        f.write_text(content, encoding="utf-8")
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group,
+            [
+                "draft-add",
+                "-p",
+                "demo",
+                "--task",
+                task_id,
+                "--title",
+                title,
+                "-c",
+                str(f),
+                "--target",
+                target,
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+    def test_auto_promote_routes_to_rules(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        data_path = _setup_config(tmp_path)
+        (data_path / "projects" / "demo").mkdir(parents=True, exist_ok=True)
+
+        self._add(
+            tmp_path,
+            "DM-001",
+            "never-import-legacy",
+            "NEVER import from src/legacy/ in any FastAPI router — scheduled for Q3 removal.",
+            "rules",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group, ["promote-drafts", "-p", "demo", "--auto"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "harness=1" in result.output
+        rules_md = data_path / "projects" / "demo" / "rules.md"
+        assert rules_md.exists()
+        text = rules_md.read_text(encoding="utf-8")
+        assert "## Learned rules" in text
+        assert "NEVER import from src/legacy/" in text
+
+    def test_auto_promote_routes_to_architecture(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        data_path = _setup_config(tmp_path)
+        (data_path / "projects" / "demo").mkdir(parents=True, exist_ok=True)
+
+        self._add(
+            tmp_path,
+            "DM-002",
+            "core-isolation",
+            "hivemind.core must not import from hivemind.commands — enforce one-way dependency.",
+            "architecture",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group, ["promote-drafts", "-p", "demo", "--auto"]
+        )
+        assert result.exit_code == 0
+        arch_md = data_path / "projects" / "demo" / "architecture.md"
+        assert arch_md.exists()
+        assert "## Learned constraints" in arch_md.read_text(encoding="utf-8")
+
+    def test_duplicate_harness_append_is_noop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        data_path = _setup_config(tmp_path)
+        (data_path / "projects" / "demo").mkdir(parents=True, exist_ok=True)
+
+        body = (
+            "NEVER set DEBUG=True in production config.py — it leaks secret "
+            "keys into error pages and bypasses auth middleware."
+        )
+        self._add(tmp_path, "DM-001", "no-debug-prod-a", body, "rules")
+        self._add(tmp_path, "DM-002", "no-debug-prod-b", body, "rules")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group, ["promote-drafts", "-p", "demo", "--auto"]
+        )
+        assert result.exit_code == 0
+        rules_md = data_path / "projects" / "demo" / "rules.md"
+        occurrences = rules_md.read_text(encoding="utf-8").count(body)
+        assert occurrences == 1  # deduped

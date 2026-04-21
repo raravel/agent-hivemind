@@ -13,10 +13,16 @@ Invoke `/hv:clarify` BEFORE starting any implementation work when the user reque
 
 ## Exemptions (do NOT invoke)
 
-- Information queries (explain, search, find, tell me)
-- Reading or searching existing code
-- Tasks with existing spec documents
-- Bug fixes with explicit cause and scope
+Skip the 7-axis check when ANY of the following match. Each rule is a specific override — when in doubt, invoke clarify.
+
+1. **Information queries** — explain, search, find, tell me, show, list, what, why, how (questions only, no code change).
+2. **Read-only exploration** — reading or searching existing code without modification.
+3. **Existing spec reference** — the request points to an existing `projects/{name}/features/*.md` or to a plan/design document already in the repo, and asks for implementation of that spec only.
+4. **Trivial keyword match** — the request matches these keywords AND the expected diff is clearly small: `fix typo`, `rename`, `bump`, `lint`, `format`, `revert`, `hotfix`, `chore`, `docs-only`. Scope must be obvious from context.
+5. **Scoped bug fix** — a bug with an explicit cause (user quotes the error, or points to a file+line) and a bounded fix (affecting ≤ 2 files). Larger bug work still needs clarify.
+6. **User override** — user explicitly says `/clarify --skip`, `skip clarify`, `just do it`, `go ahead`, or `make it so`. Warn once about ambiguity, then proceed.
+
+If you match an exemption rule, state which one in one short sentence before proceeding. This keeps the decision auditable.
 
 ## The 7 Ambiguity Axes
 

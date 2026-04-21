@@ -45,7 +45,7 @@ class TestConfigNoArgs:
             result = runner.invoke(config_cmd, [])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
-        assert parsed["version"] == "2.0.0"
+        assert parsed["version"] == "3.0.0"
         assert "profiles" in parsed
 
     def test_output_is_valid_json(
@@ -75,7 +75,7 @@ class TestConfigGet:
         with _patch_resolve(config_path):
             result = runner.invoke(config_cmd, ["profiles.balanced.executor"])
         assert result.exit_code == 0
-        assert result.output.strip() == "sonnet"
+        assert result.output.strip() == "claude-sonnet-4-6"
 
     def test_get_dict_value_as_json(
         self, runner: CliRunner, config_path: Path
@@ -84,7 +84,7 @@ class TestConfigGet:
             result = runner.invoke(config_cmd, ["profiles.balanced"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
-        assert parsed["executor"] == "sonnet"
+        assert parsed["executor"] == "claude-sonnet-4-6"
 
     def test_get_missing_key_errors(
         self, runner: CliRunner, config_path: Path

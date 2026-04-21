@@ -53,6 +53,28 @@ def validate_task_frontmatter(fm: dict[str, object]) -> None:
         )
     validate_status(status)
 
+    if "verification_required" in fm:
+        vr = fm["verification_required"]
+        if not isinstance(vr, bool):
+            raise ValueError(
+                f"Invalid verification_required type: expected bool, got {type(vr).__name__}"
+            )
+
+
+def verification_required(fm: dict[str, object]) -> bool:
+    """Return whether the verify-first gate applies to this task.
+
+    Defaults to True. Explicit frontmatter override takes precedence; otherwise
+    ``chore`` and ``docs`` task types are exempt.
+    """
+    override = fm.get("verification_required")
+    if isinstance(override, bool):
+        return override
+    ttype = fm.get("type")
+    if isinstance(ttype, str) and ttype in {"chore", "docs"}:
+        return False
+    return True
+
 
 def parse_task(path: Path) -> tuple[dict[str, object], str]:
     """Parse a markdown file with YAML frontmatter.

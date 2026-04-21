@@ -9,7 +9,14 @@ from typing import Optional
 
 import click
 
-from hivemind.commands.task import PRIORITY_ORDER, _find_config, _find_task_file, _scan_tasks
+from hivemind.commands.task import (
+    PRIORITY_ORDER,
+    _LEAF_TYPES,
+    _find_config,
+    _find_task_file,
+    _scan_tasks,
+    _effective_type,
+)
 from hivemind.core.parser import parse_task
 
 
@@ -25,14 +32,14 @@ def _find_in_progress(
     return None
 
 
-def _find_next_pending(
+def _find_ready_tasks(
     data_path: Path,
     project: str | None,
-) -> tuple[dict[str, object], str, Path] | None:
-    """Find the next pending task with resolved deps, sorted by priority."""
+    leaf_only: bool = True,
+) -> list[tuple[dict[str, object], str, Path]]:
+    """Return all pending tasks with resolved deps, sorted by priority+age."""
     all_tasks = _scan_tasks(data_path, project)
 
-    # Build status lookup
     status_map: dict[str, str] = {}
     for fm, _body, _path in all_tasks:
         tid = fm.get("id")
@@ -40,11 +47,15 @@ def _find_next_pending(
         if isinstance(tid, str) and isinstance(st, str):
             status_map[tid] = st
 
-    # Filter to pending tasks whose dependencies are all done
     candidates: list[tuple[dict[str, object], str, Path]] = []
     for fm, body, path in all_tasks:
         if fm.get("status") != "pending":
             continue
+
+        if leaf_only:
+            ttype = _effective_type(str(fm.get("type", "")))
+            if ttype not in _LEAF_TYPES:
+                continue
 
         deps = fm.get("depends_on")
         if isinstance(deps, list) and deps:
@@ -52,12 +63,13 @@ def _find_next_pending(
             if not all_done:
                 continue
 
+        parent_id = fm.get("parent")
+        if parent_id and isinstance(parent_id, str):
+            if status_map.get(parent_id) == "done":
+                continue
+
         candidates.append((fm, body, path))
 
-    if not candidates:
-        return None
-
-    # Sort by priority (high > medium > low) then by created (oldest first)
     def sort_key(item: tuple[dict[str, object], str, Path]) -> tuple[int, str]:
         fm = item[0]
         p = str(fm.get("priority", "medium"))
@@ -66,7 +78,16 @@ def _find_next_pending(
         return (-priority_val, created)
 
     candidates.sort(key=sort_key)
-    return candidates[0]
+    return candidates
+
+
+def _find_next_pending(
+    data_path: Path,
+    project: str | None,
+) -> tuple[dict[str, object], str, Path] | None:
+    """Find the next pending task with resolved deps, sorted by priority."""
+    ready = _find_ready_tasks(data_path, project, leaf_only=False)
+    return ready[0] if ready else None
 
 
 def _output_task(
@@ -95,9 +116,47 @@ def _output_task(
             click.echo(body)
 
 
+def _output_tasks_array(
+    items: list[tuple[dict[str, object], str, Path]],
+    fmt: str,
+) -> None:
+    """Output multiple ready tasks. JSON-only mode prints a JSON array."""
+    if fmt == "json":
+        payload = [
+            {
+                "id": fm.get("id", ""),
+                "frontmatter": fm,
+                "body": body,
+                "path": str(path),
+            }
+            for fm, body, path in items
+        ]
+        click.echo(json.dumps(payload, indent=2, default=str))
+    else:
+        for i, (fm, _body, _path) in enumerate(items):
+            if i > 0:
+                click.echo("")
+                click.echo("---")
+            click.echo(f"{fm.get('id', '')}  [{fm.get('type', '')}]  {fm.get('title', '')}")
+
+
 @click.command()
 @click.option("--project", "-p", default=None, help="Project name.")
 @click.option("--task", "-t", "task_id", default=None, help="Task ID.")
+@click.option(
+    "--ready-only",
+    "ready_only",
+    is_flag=True,
+    default=False,
+    help="Return all ready tasks (for --parallel orchestration), not just the next one.",
+)
+@click.option(
+    "--limit",
+    "limit",
+    type=int,
+    default=None,
+    help="With --ready-only, cap the number of tasks returned.",
+)
 @click.option(
     "--format",
     "fmt",
@@ -105,15 +164,33 @@ def _output_task(
     type=click.Choice(["text", "json"]),
     help="Output format.",
 )
-def run(project: Optional[str], task_id: Optional[str], fmt: str) -> None:
+def run(
+    project: Optional[str],
+    task_id: Optional[str],
+    ready_only: bool,
+    limit: Optional[int],
+    fmt: str,
+) -> None:
     """Fetch task content for the run-task pipeline."""
     _cfg, data_path = _find_config()
 
     if task_id is not None:
-        # Explicit task ID given
         task_path = _find_task_file(data_path, task_id)
         fm, body = parse_task(task_path)
         _output_task(fm, body, task_path, fmt)
+        return
+
+    if ready_only:
+        ready = _find_ready_tasks(data_path, project, leaf_only=True)
+        if limit is not None and limit > 0:
+            ready = ready[:limit]
+        if not ready:
+            if fmt == "json":
+                click.echo("[]")
+            else:
+                click.echo("No ready tasks available")
+            sys.exit(1)
+        _output_tasks_array(ready, fmt)
         return
 
     # Auto-detect: first look for in_progress
@@ -130,6 +207,5 @@ def run(project: Optional[str], task_id: Optional[str], fmt: str) -> None:
         _output_task(fm, body, path, fmt)
         return
 
-    # No task available
     click.echo("No tasks available")
     sys.exit(1)

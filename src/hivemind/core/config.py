@@ -1,40 +1,89 @@
-"""Config management for .hivemind.json (v2 schema)."""
+"""Config management for .hivemind.json (v3 schema)."""
 
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
+DEFAULT_DATA_PATH = "~/agent-hivemind-data"
+
+# Per-Mtoken USD pricing, seeded from public Anthropic pricing. Users may
+# override in .hivemind.json; values are cents-level estimates.
+DEFAULT_PRICING: dict[str, dict[str, float]] = {
+    "claude-opus-4-7": {"input": 15.0, "output": 75.0},
+    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
+    "claude-haiku-4-5": {"input": 0.8, "output": 4.0},
+}
+
 
 def default_config() -> dict[str, Any]:
-    """Return default v2 config dict."""
+    """Return default v3 config dict."""
     return {
-        "version": "2.0.0",
-        "data_path": "~/agent-hivemind-data",
+        "version": "3.0.0",
+        "data_path": DEFAULT_DATA_PATH,
         "git_enabled": False,
         "auto_commit": False,
         "model_profile": "balanced",
         "profiles": {
             "quality": {
-                "planner": "opus",
-                "executor": "opus",
-                "reviewer": "opus",
+                "planner": "claude-opus-4-7",
+                "executor": "claude-opus-4-7",
+                "reviewer": "claude-opus-4-7",
             },
             "balanced": {
-                "planner": "opus",
-                "executor": "sonnet",
-                "reviewer": "sonnet",
+                "planner": "claude-opus-4-7",
+                "executor": "claude-sonnet-4-6",
+                "reviewer": "claude-sonnet-4-6",
             },
             "budget": {
-                "planner": "sonnet",
-                "executor": "sonnet",
-                "reviewer": "haiku",
+                "planner": "claude-sonnet-4-6",
+                "executor": "claude-haiku-4-5",
+                "reviewer": "claude-haiku-4-5",
             },
         },
+        "pricing": DEFAULT_PRICING,
+        "parallel": {"max_concurrency": 2},
         "projects": {},
         "filter_patterns": [],
     }
+
+
+def data_path_for_storage(p: Path | str) -> str:
+    """Normalize a path for cross-platform storage in JSON configs.
+
+    Uses ``~`` prefix when the path lives under HOME so the file stays
+    portable across machines. Always writes POSIX-style separators.
+    """
+    path = Path(str(p)).expanduser().resolve()
+    try:
+        rel = path.relative_to(Path.home().resolve())
+        return f"~/{rel.as_posix()}" if rel.parts else "~"
+    except ValueError:
+        return path.as_posix()
+
+
+def _looks_like_foreign_windows(raw: str) -> bool:
+    """Return True if *raw* is a Windows-style absolute path on non-Windows."""
+    if sys.platform == "win32":
+        return False
+    return len(raw) >= 2 and raw[1] == ":" and raw[0].isalpha()
+
+
+def normalize_data_path(raw: str | Path | None) -> Path:
+    """Resolve a stored ``data_path`` value to a usable Path.
+
+    Falls back to ``~/agent-hivemind-data`` when *raw* is empty or carries a
+    path from a foreign platform (e.g. ``C:\\...`` on macOS).
+    """
+    default = Path(DEFAULT_DATA_PATH).expanduser().resolve()
+    if not raw:
+        return default
+    s = str(raw)
+    if _looks_like_foreign_windows(s):
+        return default
+    return Path(s).expanduser().resolve()
 
 
 class HivemindConfig:
@@ -102,11 +151,9 @@ class HivemindConfig:
 
     @property
     def data_path(self) -> Path:
-        """Return resolved data path (expand ~)."""
-        raw = self._data.get("data_path", "~/agent-hivemind-data")
-        if not isinstance(raw, str):
-            raw = "~/agent-hivemind-data"
-        return Path(raw).expanduser()
+        """Return resolved data path, cross-platform safe."""
+        raw = self._data.get("data_path")
+        return normalize_data_path(raw if isinstance(raw, str) else None)
 
     @property
     def raw(self) -> dict[str, Any]:

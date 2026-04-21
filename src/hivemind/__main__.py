@@ -7,10 +7,13 @@ import click
 from hivemind.commands.audit import audit as _audit_cmd
 from hivemind.commands.commit import push_cmd as _push_cmd
 from hivemind.commands.config_cmd import config_cmd as _config_cmd
+from hivemind.commands.doctor import doctor_cmd as _doctor_cmd
 from hivemind.commands.feedback import feedback as _feedback_group
+from hivemind.commands.harness_score import harness_score_cmd as _harness_score_cmd
 from hivemind.commands.important import important as _important_group
 from hivemind.commands.init import init_cmd as _init_cmd
 from hivemind.commands.link import link_cmd as _link_cmd
+from hivemind.commands.migrate import migrate_cmd as _migrate_cmd
 from hivemind.commands.run import run as _run_cmd
 from hivemind.commands.search import index as _index_group
 from hivemind.commands.search import search as _search_cmd
@@ -27,6 +30,9 @@ def cli() -> None:
 
 cli.add_command(_init_cmd)
 cli.add_command(_link_cmd)
+cli.add_command(_migrate_cmd)
+cli.add_command(_doctor_cmd)
+cli.add_command(_harness_score_cmd)
 
 
 cli.add_command(_push_cmd, "push")

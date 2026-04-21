@@ -52,7 +52,9 @@ def _make_plugin_source(base: Path, *, skills: list[str] | None = None, hooks: b
         hooks_dir = src / "hooks"
         hooks_dir.mkdir(parents=True, exist_ok=True)
         (hooks_dir / "hooks.json").write_text("{}", encoding="utf-8")
-        (hooks_dir / "hv-pre-commit.js").write_text("// hook", encoding="utf-8")
+        (hooks_dir / "hv_pre_commit.py").write_text(
+            "#!/usr/bin/env python3\n", encoding="utf-8"
+        )
 
     return src
 
@@ -83,7 +85,7 @@ class TestInstallPlugin:
 
         result = install_plugin(source, target)
 
-        assert "hook:hv-pre-commit" in result
+        assert "hook:hv_pre_commit" in result
         assert (target / "hooks" / "hooks.json").exists()
 
     def test_installs_skills_and_hooks(self, mock_cmd: mock.MagicMock, tmp_path: Path) -> None:
@@ -93,7 +95,7 @@ class TestInstallPlugin:
         result = install_plugin(source, target)
 
         assert "/hv:search" in result
-        assert "hook:hv-pre-commit" in result
+        assert "hook:hv_pre_commit" in result
 
     def test_overwrites_existing_target(self, mock_cmd: mock.MagicMock, tmp_path: Path) -> None:
         source = _make_plugin_source(tmp_path, skills=["audit"])
@@ -138,8 +140,8 @@ class TestInstallHooks:
     def _make_source(self, tmp_path: Path) -> Path:
         source = tmp_path / "hook_src"
         source.mkdir()
-        (source / "hv-pre-commit.js").write_text(
-            "// hook", encoding="utf-8"
+        (source / "hv_pre_commit.py").write_text(
+            "#!/usr/bin/env python3\n", encoding="utf-8"
         )
         return source
 
@@ -158,18 +160,18 @@ class TestInstallHooks:
         assert entries[0]["matcher"] == "Bash"
         hook_item = entries[0]["hooks"][0]
         assert hook_item["type"] == "command"
-        assert "hv-pre-commit.js" in hook_item["command"]
+        assert "hv_pre_commit.py" in hook_item["command"]
+        assert hook_item["command"].startswith("python3 ")
 
     def test_preserves_existing_hooks(self, tmp_path: Path) -> None:
         source = self._make_source(tmp_path)
         settings = tmp_path / "settings.json"
 
-        # Pre-existing setting with a user hook
         existing = {
             "theme": "dark",
             "hooks": {
                 "PostToolUse": [
-                    {"matcher": "Write", "hooks": ["/user/hook.js"]}
+                    {"matcher": "Write", "hooks": ["/user/hook.py"]}
                 ]
             },
         }
@@ -180,36 +182,34 @@ class TestInstallHooks:
         install_hooks(source, settings)
 
         data = json.loads(settings.read_text(encoding="utf-8"))
-        # User hook still present
         assert data["theme"] == "dark"
         assert "PostToolUse" in data["hooks"]
         assert len(data["hooks"]["PostToolUse"]) == 1
-        # Hivemind hook added
         assert "PreToolUse" in data["hooks"]
 
     def test_skips_duplicate_hooks(self, tmp_path: Path) -> None:
         source = self._make_source(tmp_path)
         settings = tmp_path / "settings.json"
 
-        # First install
         assert install_hooks(source, settings) is True
-        # Second install should detect duplicate and skip
         assert install_hooks(source, settings) is False
 
-    def test_copies_js_files(self, tmp_path: Path) -> None:
+    def test_copies_py_files(self, tmp_path: Path) -> None:
         source = self._make_source(tmp_path)
         settings = tmp_path / "settings.json"
 
         install_hooks(source, settings)
 
         hooks_dir = tmp_path / "hooks"
-        assert (hooks_dir / "hv-pre-commit.js").exists()
+        assert (hooks_dir / "hv_pre_commit.py").exists()
         assert (
-            (hooks_dir / "hv-pre-commit.js").read_text(encoding="utf-8")
-            == "// hook"
+            "python3"
+            in (hooks_dir / "hv_pre_commit.py").read_text(encoding="utf-8")
+            or "#!/usr/bin/env python3"
+            in (hooks_dir / "hv_pre_commit.py").read_text(encoding="utf-8")
         )
 
-    def test_no_js_files_returns_false(self, tmp_path: Path) -> None:
+    def test_no_py_files_returns_false(self, tmp_path: Path) -> None:
         source = tmp_path / "empty_hooks"
         source.mkdir()
         settings = tmp_path / "settings.json"
@@ -282,4 +282,4 @@ class TestInstallProfiles:
 
         loaded = HivemindConfig.load(config_path)
         assert loaded.get("model_profile") == "quality"
-        assert loaded.get("version") == "2.0.0"
+        assert loaded.get("version") == "3.0.0"

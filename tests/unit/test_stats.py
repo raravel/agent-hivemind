@@ -160,9 +160,9 @@ class TestComputeStats:
                 "task_id": "PROJ-001",
                 "status": "completed",
                 "duration_minutes": 30,
-                "retries": 2,
-                "review_passed": True,
-                "lint_failed": False,
+                "coding_retries": 1,
+                "verify_retries": 1,
+                "blocking_issues": False,
             }
         ]
         result = _compute_stats(reports)
@@ -170,54 +170,105 @@ class TestComputeStats:
         assert result["avg_duration"] == 30.0
         assert result["avg_retries"] == 2.0
         assert result["review_pass_rate"] == 100.0
-        assert result["lint_fail_rate"] == 0.0
 
     def test_multiple_reports(self) -> None:
         reports: list[dict[str, object]] = [
             {
                 "duration_minutes": 30,
-                "retries": 0,
-                "review_passed": True,
-                "lint_failed": False,
+                "coding_retries": 0,
+                "blocking_issues": False,
             },
             {
                 "duration_minutes": 60,
-                "retries": 2,
-                "review_passed": True,
-                "lint_failed": True,
+                "coding_retries": 1,
+                "verify_retries": 1,
+                "blocking_issues": False,
             },
             {
                 "duration_minutes": 45,
-                "retries": 1,
-                "review_passed": False,
-                "lint_failed": False,
+                "coding_retries": 1,
+                "blocking_issues": True,
             },
             {
                 "duration_minutes": 15,
-                "retries": 3,
-                "review_passed": True,
-                "lint_failed": True,
+                "coding_retries": 2,
+                "verify_retries": 1,
+                "blocking_issues": False,
             },
         ]
         result = _compute_stats(reports)
         assert result["total_tasks"] == 4
         assert result["avg_duration"] == 37.5
+        # avg retries = (0 + 2 + 1 + 3) / 4 = 1.5
         assert result["avg_retries"] == 1.5
         assert result["review_pass_rate"] == 75.0
-        assert result["lint_fail_rate"] == 50.0
 
     def test_missing_numeric_fields(self) -> None:
         """Reports without duration/retries should still work."""
         reports: list[dict[str, object]] = [
-            {"review_passed": True, "lint_failed": True},
-            {"review_passed": False, "lint_failed": False},
+            {"blocking_issues": False},
+            {"blocking_issues": True},
         ]
         result = _compute_stats(reports)
         assert result["total_tasks"] == 2
         assert result["avg_duration"] == 0.0
         assert result["avg_retries"] == 0.0
         assert result["review_pass_rate"] == 50.0
-        assert result["lint_fail_rate"] == 50.0
+
+    def test_rubric_averages(self) -> None:
+        reports: list[dict[str, object]] = [
+            {
+                "review_scores": {
+                    "correctness": 9,
+                    "spec_compliance": 8,
+                    "safety": 10,
+                    "clarity": 7,
+                },
+            },
+            {
+                "review_scores": {
+                    "correctness": 7,
+                    "spec_compliance": 9,
+                    "safety": 9,
+                    "clarity": 8,
+                },
+            },
+        ]
+        result = _compute_stats(reports)
+        assert result["avg_correctness"] == 8.0
+        assert result["avg_spec_compliance"] == 8.5
+        assert result["avg_safety"] == 9.5
+        assert result["avg_clarity"] == 7.5
+
+    def test_cost_aggregation(self) -> None:
+        reports: list[dict[str, object]] = [
+            {
+                "tokens": {"input": 1000, "output": 500},
+                "cost_usd": 0.12,
+                "profile": "balanced",
+                "task_type": "task",
+            },
+            {
+                "tokens": {"input": 2000, "output": 1500},
+                "cost_usd": 0.45,
+                "profile": "balanced",
+                "task_type": "bug",
+            },
+            {
+                "tokens": {"input": 500, "output": 100},
+                "cost_usd": 0.01,
+                "profile": "budget",
+                "task_type": "chore",
+            },
+        ]
+        result = _compute_stats(reports)
+        assert result["total_input_tokens"] == 3500
+        assert result["total_output_tokens"] == 2100
+        assert result["total_cost_usd"] == 0.58
+        assert result["by_profile"]["balanced"]["tasks"] == 2
+        assert abs(float(result["by_profile"]["balanced"]["cost_usd"]) - 0.57) < 0.001
+        assert result["by_profile"]["budget"]["tasks"] == 1
+        assert result["by_type"]["chore"]["tasks"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +285,15 @@ class TestFormatTable:
             "avg_duration": 35.2,
             "avg_retries": 1.3,
             "review_pass_rate": 80.0,
-            "lint_fail_rate": 10.0,
+            "avg_correctness": 8.2,
+            "avg_spec_compliance": 8.0,
+            "avg_safety": 9.1,
+            "avg_clarity": 7.8,
+            "total_input_tokens": 1_500_000,
+            "total_output_tokens": 500_000,
+            "total_cost_usd": 12.34,
+            "by_profile": {"balanced": {"tasks": 10, "cost_usd": 12.34}},
+            "by_type": {"task": {"tasks": 10, "cost_usd": 12.34}},
         }
         table = _format_table("myproj", stats_data)
         assert "=== Stats: myproj ===" in table
@@ -244,8 +303,13 @@ class TestFormatTable:
         assert "35.2" in table
         assert "Review pass rate" in table
         assert "80.0" in table
-        assert "Lint fail rate" in table
-        assert "10.0" in table
+        assert "correctness" in table
+        assert "spec_compliance" in table
+        assert "safety" in table
+        assert "clarity" in table
+        assert "$12.34" in table
+        assert "By profile" in table
+        assert "By task type" in table
 
 
 # ---------------------------------------------------------------------------
