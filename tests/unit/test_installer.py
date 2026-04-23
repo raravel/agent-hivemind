@@ -18,7 +18,12 @@ from hivemind.core.config import HivemindConfig, default_config
 # ---------------------------------------------------------------------------
 
 
-def _make_plugin_source(base: Path, *, skills: list[str] | None = None, hooks: bool = False) -> Path:
+def _make_plugin_source(
+    base: Path,
+    *,
+    skills: list[str] | None = None,
+    hooks: bool = False,
+) -> Path:
     """Create a minimal plugin directory structure.
 
     Parameters
@@ -40,12 +45,15 @@ def _make_plugin_source(base: Path, *, skills: list[str] | None = None, hooks: b
     plugin_meta = src / ".claude-plugin"
     plugin_meta.mkdir(parents=True)
     (plugin_meta / "plugin.json").write_text(
-        json.dumps({"name": "hv", "version": "1.0.0"}), encoding="utf-8"
+        json.dumps(
+            {"name": "hv", "version": "1.0.0", "skills": "./skills/claude/"}
+        ),
+        encoding="utf-8",
     )
 
     if skills:
         for name in skills:
-            skill_dir = src / "skills" / name
+            skill_dir = src / "skills" / "claude" / name
             skill_dir.mkdir(parents=True, exist_ok=True)
             (skill_dir / "SKILL.md").write_text(f"# {name}", encoding="utf-8")
 
@@ -66,13 +74,13 @@ def _make_codex_plugin_source(base: Path, *, skills: list[str] | None = None) ->
     plugin_meta = src / ".codex-plugin"
     plugin_meta.mkdir(parents=True)
     (plugin_meta / "plugin.json").write_text(
-        json.dumps({"name": "hv", "version": "1.0.0", "skills": "./skills/"}),
+        json.dumps({"name": "hv", "version": "1.0.0", "skills": "./skills/codex/"}),
         encoding="utf-8",
     )
 
     if skills:
         for name in skills:
-            skill_dir = src / "skills" / name
+            skill_dir = src / "skills" / "codex" / name
             skill_dir.mkdir(parents=True, exist_ok=True)
             (skill_dir / "SKILL.md").write_text(f"# {name}", encoding="utf-8")
 
@@ -96,8 +104,9 @@ class TestInstallPlugin:
 
         assert "/hv:audit" in result
         assert "/hv:plan" in result
-        assert (target / "skills" / "audit" / "SKILL.md").exists()
-        assert (target / "skills" / "plan" / "SKILL.md").exists()
+        assert (target / "skills" / "claude" / "audit" / "SKILL.md").exists()
+        assert (target / "skills" / "claude" / "plan" / "SKILL.md").exists()
+        assert not (target / "skills" / "codex").exists()
 
     def test_installs_hooks(self, mock_cmd: mock.MagicMock, tmp_path: Path) -> None:
         source = _make_plugin_source(tmp_path, hooks=True)
@@ -124,11 +133,15 @@ class TestInstallPlugin:
         # First install
         install_plugin(source, target)
         # Modify a file to verify overwrite
-        (target / "skills" / "audit" / "SKILL.md").write_text("old", encoding="utf-8")
+        (target / "skills" / "claude" / "audit" / "SKILL.md").write_text(
+            "old", encoding="utf-8"
+        )
 
         # Second install should overwrite
         install_plugin(source, target)
-        content = (target / "skills" / "audit" / "SKILL.md").read_text(encoding="utf-8")
+        content = (target / "skills" / "claude" / "audit" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
         assert content == "# audit"
 
     def test_empty_plugin_returns_empty(self, mock_cmd: mock.MagicMock, tmp_path: Path) -> None:
@@ -250,18 +263,19 @@ class TestInstallCodexPlugin:
     """Tests for Codex plugin installation."""
 
     def test_installs_skills(self, tmp_path: Path) -> None:
-        source = _make_codex_plugin_source(tmp_path, skills=["plan", "task"])
+        source = _make_codex_plugin_source(tmp_path, skills=["hv-plan", "hv-task"])
         target = tmp_path / ".codex" / "plugins" / "hv"
         marketplace = tmp_path / ".agents" / "plugins" / "marketplace.json"
 
         result = install_codex_plugin(source, target, marketplace)
 
-        assert "skill:plan" in result
-        assert "skill:task" in result
-        assert (target / "skills" / "plan" / "SKILL.md").exists()
+        assert "skill:hv-plan" in result
+        assert "skill:hv-task" in result
+        assert (target / "skills" / "codex" / "hv-plan" / "SKILL.md").exists()
+        assert not (target / "skills" / "claude").exists()
 
     def test_upserts_personal_marketplace(self, tmp_path: Path) -> None:
-        source = _make_codex_plugin_source(tmp_path, skills=["plan"])
+        source = _make_codex_plugin_source(tmp_path, skills=["hv-plan"])
         target = tmp_path / ".codex" / "plugins" / "hv"
         marketplace = tmp_path / ".agents" / "plugins" / "marketplace.json"
 

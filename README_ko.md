@@ -210,11 +210,14 @@ Codex는 같은 데이터 저장소와 프로젝트 링크를 쓰지만 호출 �
 - `hv init --target codex`로 `hv` Codex 플러그인과 marketplace 엔트리를 설치
 - `hv link --target codex`로 `AGENTS.md`와 repo-local `.codex/hooks.json` 생성
 - Codex는 `AGENTS.md`를 직접 읽고, Claude식 `@import`는 지원하지 않음
+- Codex는 `hv-init`, `hv-plan`, `hv-task`, `hv-verify` 같은 별도 `hv-*` skill 세트를 설치
 - Codex에서는 plugin/skills UX 또는 `hv` 플러그인을 언급하는 자연어 요청으로 사용
 
 예:
 
 ```text
+Use the hv-plan skill to break this feature into tracked tasks.
+Use the hv-task skill to execute the next ready task.
 Use the hv plugin to plan this feature and create tracked tasks.
 Use the hv plugin to run verification for the current project.
 ```

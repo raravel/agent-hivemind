@@ -1,7 +1,8 @@
 """`hv harness-score` subcommand group — record / show / history.
 
-The LLM judgment lives in the /hv:score-harness skill. This module is the
-thin, deterministic I/O layer the skill pipes results into.
+The LLM judgment lives in the harness scoring skills (`/hv:score-harness`
+for Claude, `hv-score-harness` for Codex). This module is the thin,
+deterministic I/O layer those skills pipe results into.
 """
 
 from __future__ import annotations
@@ -107,7 +108,7 @@ def record(project: str, from_stdin: bool, model: str | None) -> None:
     spec_dir = harness_spec_dir(data_path, project)
     if not spec_dir.exists():
         raise click.ClickException(
-            f"no harness spec dir for project: {spec_dir} — run /hv:plan first"
+            f"no harness spec dir for project: {spec_dir} — run the planning skill first"
         )
 
     resolved_model = model

@@ -14,6 +14,7 @@ import click
 
 from hivemind.core.config import HivemindConfig, normalize_data_path
 from hivemind.core.instructions import normalize_targets
+from hivemind.installer.plugin_bundle import resolve_manifest_skills_dir
 
 Severity = str  # "ok" | "warn" | "error"
 
@@ -119,12 +120,7 @@ def _check_claude_plugin_installed() -> CheckResult:
             f"{plugin_dir} exists but missing .claude-plugin/plugin.json",
         )
 
-    skills_dir = plugin_dir / "skills"
-    skills = (
-        [d.name for d in sorted(skills_dir.iterdir()) if d.is_dir()]
-        if skills_dir.exists()
-        else []
-    )
+    skills = _list_plugin_skills(plugin_dir, ".claude-plugin/plugin.json")
 
     hooks_dir = plugin_dir / "hooks"
     hook_files = sorted(p.name for p in hooks_dir.glob("hv_*.py")) if hooks_dir.exists() else []
@@ -161,12 +157,7 @@ def _check_codex_plugin_installed() -> CheckResult:
             f"{plugin_dir} exists but missing .codex-plugin/plugin.json",
         )
 
-    skills_dir = plugin_dir / "skills"
-    skills = (
-        [d.name for d in sorted(skills_dir.iterdir()) if d.is_dir()]
-        if skills_dir.exists()
-        else []
-    )
+    skills = _list_plugin_skills(plugin_dir, ".codex-plugin/plugin.json")
     marketplace = Path("~/.agents/plugins/marketplace.json").expanduser()
     marketplace_note = "marketplace missing"
     if marketplace.exists():
@@ -217,6 +208,21 @@ def _check_project_link(project_dir: Path) -> tuple[CheckResult, dict[str, Any] 
     return _ok("Project link", f"{project} -> {resolved}"), link
 
 
+def _list_plugin_skills(plugin_dir: Path, manifest_relpath: str) -> list[str]:
+    """Return actual skill directory names from the manifest-declared skills path."""
+    try:
+        skills_dir = resolve_manifest_skills_dir(plugin_dir, manifest_relpath)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not skills_dir.exists():
+        return []
+    return [
+        d.name
+        for d in sorted(skills_dir.iterdir())
+        if d.is_dir() and (d / "SKILL.md").exists()
+    ]
+
+
 def _determine_targets(
     link: dict[str, Any] | None,
     cfg: HivemindConfig | None,
@@ -265,7 +271,7 @@ def _check_verify_md(
     return _err(
         "Project verify.md",
         f"neither verify.md nor build-verify.md in {project_spec_dir}"
-        " — run /hv:create-verify to generate one",
+        " — use the create-verify skill to generate one",
     )
 
 

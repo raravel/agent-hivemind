@@ -237,11 +237,14 @@ Codex uses the same data repo and project link, but its invocation surface is di
 - `hv init --target codex` installs the `hv` Codex plugin and marketplace entry
 - `hv link --target codex` writes `AGENTS.md` and repo-local `.codex/hooks.json`
 - Codex reads `AGENTS.md` directly; it does not support Claude-style `@import`
-- Use the installed `hv` plugin skills through Codex plugin/skills UX or natural-language requests that mention the `hv` plugin
+- Codex installs a separate `hv-*` skill set such as `hv-init`, `hv-plan`, `hv-task`, and `hv-verify`
+- Use those skills through Codex plugin/skills UX or natural-language requests that mention the `hv` plugin
 
 In practice:
 
 ```text
+Use the hv-plan skill to break this feature into tracked tasks.
+Use the hv-task skill to execute the next ready task.
 Use the hv plugin to plan this feature and create tracked tasks.
 Use the hv plugin to run verification for the current project.
 ```

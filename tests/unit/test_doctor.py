@@ -10,6 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from hivemind.commands.doctor import (
+    _list_plugin_skills,
     doctor_cmd,
     run_checks,
     _check_legacy_artifacts,
@@ -154,6 +155,25 @@ class TestLegacyArtifactsCheck:
         result = _check_legacy_artifacts(project_dir)
         assert result.severity == "warn"
         assert "obsidian-import" in result.detail
+
+
+class TestPluginSkillDiscovery:
+    def test_reads_manifest_declared_codex_skill_dir(self, tmp_path: Path) -> None:
+        plugin_dir = tmp_path / "plugin"
+        (plugin_dir / ".codex-plugin").mkdir(parents=True)
+        (plugin_dir / ".codex-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "hv", "skills": "./skills/codex/"}),
+            encoding="utf-8",
+        )
+        (plugin_dir / "skills" / "codex" / "hv-plan").mkdir(parents=True)
+        (plugin_dir / "skills" / "codex" / "hv-plan" / "SKILL.md").write_text(
+            "# hv-plan",
+            encoding="utf-8",
+        )
+
+        skills = _list_plugin_skills(plugin_dir, ".codex-plugin/plugin.json")
+
+        assert skills == ["hv-plan"]
 
 
 class TestDoctorCLI:

@@ -24,18 +24,26 @@ from hivemind.core.config import HivemindConfig
 # ---------------------------------------------------------------------------
 
 
-def _make_plugin_source(base: Path, *, skills: list[str] | None = None, hooks: bool = False) -> Path:
+def _make_plugin_source(
+    base: Path,
+    *,
+    skills: list[str] | None = None,
+    hooks: bool = False,
+) -> Path:
     """Create a minimal plugin directory structure for testing."""
     src = base / "plugin_src"
     plugin_meta = src / ".claude-plugin"
     plugin_meta.mkdir(parents=True)
     (plugin_meta / "plugin.json").write_text(
-        json.dumps({"name": "hv", "version": "1.0.0"}), encoding="utf-8"
+        json.dumps(
+            {"name": "hv", "version": "1.0.0", "skills": "./skills/claude/"}
+        ),
+        encoding="utf-8",
     )
 
     if skills:
         for name in skills:
-            skill_dir = src / "skills" / name
+            skill_dir = src / "skills" / "claude" / name
             skill_dir.mkdir(parents=True, exist_ok=True)
             (skill_dir / "SKILL.md").write_text(f"# {name}", encoding="utf-8")
 
@@ -56,13 +64,13 @@ def _make_codex_plugin_source(base: Path, *, skills: list[str] | None = None) ->
     plugin_meta = src / ".codex-plugin"
     plugin_meta.mkdir(parents=True)
     (plugin_meta / "plugin.json").write_text(
-        json.dumps({"name": "hv", "version": "1.0.0", "skills": "./skills/"}),
+        json.dumps({"name": "hv", "version": "1.0.0", "skills": "./skills/codex/"}),
         encoding="utf-8",
     )
 
     if skills:
         for name in skills:
-            skill_dir = src / "skills" / name
+            skill_dir = src / "skills" / "codex" / name
             skill_dir.mkdir(parents=True, exist_ok=True)
             (skill_dir / "SKILL.md").write_text(f"# {name}", encoding="utf-8")
 
@@ -173,7 +181,7 @@ class TestRunInstallers:
 
     def test_codex_installed_when_source_exists(self, tmp_path: Path) -> None:
         data = self._make_data_dir(tmp_path)
-        plugin_src = _make_codex_plugin_source(tmp_path, skills=["plan"])
+        plugin_src = _make_codex_plugin_source(tmp_path, skills=["hv-plan"])
 
         summary = run_installers(
             data / ".hivemind.json",
@@ -184,7 +192,7 @@ class TestRunInstallers:
         runtime_summary = summary["codex"]
         assert isinstance(runtime_summary, dict)
         assert runtime_summary["skipped"] is False
-        assert "skill:plan" in runtime_summary["installed"]
+        assert "skill:hv-plan" in runtime_summary["installed"]
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +332,7 @@ class TestInitCmdCLI:
         self, tmp_path: Path
     ) -> None:
         data = tmp_path / "hv-data"
-        plugin_src = _make_codex_plugin_source(tmp_path, skills=["plan"])
+        plugin_src = _make_codex_plugin_source(tmp_path, skills=["hv-plan"])
 
         runner = CliRunner()
         with mock.patch(
