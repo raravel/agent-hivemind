@@ -7,6 +7,12 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from hivemind.installer.plugin_bundle import (
+    cleanup_staged_plugin_bundle,
+    resolve_manifest_skills_dir,
+    stage_runtime_plugin_bundle,
+)
+
 
 def install_codex_plugin(
     source_dir: Path,
@@ -19,19 +25,23 @@ def install_codex_plugin(
     if marketplace_path is None:
         marketplace_path = Path("~/.agents/plugins/marketplace.json").expanduser()
 
-    if target_dir.exists():
-        shutil.rmtree(target_dir)
-    target_dir.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source_dir, target_dir)
+    bundle_dir = stage_runtime_plugin_bundle(source_dir, "codex")
+    try:
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+        target_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(bundle_dir, target_dir)
 
-    _upsert_marketplace_entry(marketplace_path)
-    return _collect_components(target_dir)
+        _upsert_marketplace_entry(marketplace_path)
+        return _collect_components(target_dir)
+    finally:
+        cleanup_staged_plugin_bundle(bundle_dir)
 
 
 def _collect_components(plugin_dir: Path) -> list[str]:
     """Return installed component names for reporting."""
     installed: list[str] = []
-    skills_dir = plugin_dir / "skills"
+    skills_dir = resolve_manifest_skills_dir(plugin_dir, ".codex-plugin/plugin.json")
     if skills_dir.exists():
         for skill in sorted(skills_dir.iterdir()):
             if skill.is_dir() and (skill / "SKILL.md").exists():

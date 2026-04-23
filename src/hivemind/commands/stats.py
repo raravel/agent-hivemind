@@ -256,7 +256,7 @@ def _render_harness_trend(project: str, limit: int) -> str:
     _cfg, data_path = _find_config()
     scores = load_scores(data_path, project)
     if not scores:
-        return "No harness scores recorded yet (run /hv:score-harness)."
+        return "No harness scores recorded yet (run the hv-score-harness skill)."
 
     recent = scores[-limit:]
 

@@ -1,8 +1,9 @@
 """Harness quality scoring storage.
 
-LLM judgment lives in the /hv:score-harness skill; this module is the
-deterministic bookkeeping layer: hash the harness doc set, persist scores
-to a jsonl history, and answer freshness queries.
+LLM judgment lives in the harness scoring skills (`/hv:score-harness`
+for Claude, `hv-score-harness` for Codex); this module is the deterministic
+bookkeeping layer: hash the harness doc set, persist scores to a jsonl
+history, and answer freshness queries.
 """
 
 from __future__ import annotations
@@ -182,7 +183,7 @@ def is_fresh(
 def build_score_from_payload(
     payload: dict[str, Any], *, hash_str: str, model: str
 ) -> HarnessScore:
-    """Construct a HarnessScore from a /hv:score-harness JSON payload.
+    """Construct a HarnessScore from a harness-score skill JSON payload.
 
     Payload shape:
       {"axes": {"architecture": {"score": 8, "rationale": "...", "recommendations": [...]}, ...}}

@@ -10,7 +10,7 @@
   "repository": "https://github.com/raravel/agent-hivemind",
   "license": "MIT",
   "keywords": ["harness", "agent", "hivemind", "task", "feedback", "codex"],
-  "skills": "./skills/",
+  "skills": "./skills/codex/",
   "interface": {
     "displayName": "Agent Hivemind",
     "shortDescription": "Harness skills for managed coding workflows.",

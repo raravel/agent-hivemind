@@ -6,6 +6,12 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from hivemind.installer.plugin_bundle import (
+    cleanup_staged_plugin_bundle,
+    resolve_manifest_skills_dir,
+    stage_runtime_plugin_bundle,
+)
+
 
 def _run_claude_cmd(args: list[str]) -> tuple[bool, str]:
     """Run a ``claude`` CLI command. Return (success, output)."""
@@ -49,29 +55,35 @@ def install_claude_plugin(
     if target_dir is None:
         target_dir = Path("~/.claude/plugins/hv").expanduser()
 
-    # --- Copy plugin files ---------------------------------------------------
-    if target_dir.exists():
-        shutil.rmtree(target_dir)
-    shutil.copytree(source_dir, target_dir)
+    bundle_dir = stage_runtime_plugin_bundle(source_dir, "claude")
+    try:
+        # --- Copy plugin files ---------------------------------------------------
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+        shutil.copytree(bundle_dir, target_dir)
 
-    # --- Register marketplace + install plugin -------------------------------
-    _register_plugin(target_dir)
+        # --- Register marketplace + install plugin -------------------------------
+        _register_plugin(target_dir)
 
-    # --- Collect installed component names -----------------------------------
-    installed: list[str] = []
+        # --- Collect installed component names -----------------------------------
+        installed: list[str] = []
 
-    skills_dir = target_dir / "skills"
-    if skills_dir.exists():
-        for skill in sorted(skills_dir.iterdir()):
-            if skill.is_dir() and (skill / "SKILL.md").exists():
-                installed.append(f"/hv:{skill.name}")
+        skills_dir = resolve_manifest_skills_dir(
+            target_dir, ".claude-plugin/plugin.json"
+        )
+        if skills_dir.exists():
+            for skill in sorted(skills_dir.iterdir()):
+                if skill.is_dir() and (skill / "SKILL.md").exists():
+                    installed.append(f"/hv:{skill.name}")
 
-    hooks_dir = target_dir / "hooks"
-    if (hooks_dir / "hooks.json").exists():
-        for hook_py in sorted(hooks_dir.glob("hv_*.py")):
-            installed.append(f"hook:{hook_py.stem}")
+        hooks_dir = target_dir / "hooks"
+        if (hooks_dir / "hooks.json").exists():
+            for hook_py in sorted(hooks_dir.glob("hv_*.py")):
+                installed.append(f"hook:{hook_py.stem}")
 
-    return installed
+        return installed
+    finally:
+        cleanup_staged_plugin_bundle(bundle_dir)
 
 
 def _register_plugin(plugin_dir: Path) -> None:

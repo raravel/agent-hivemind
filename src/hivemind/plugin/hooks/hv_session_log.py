@@ -3,7 +3,7 @@
 
 Writes a compact L3 session record once per session/compaction boundary
 instead of on every UserPromptSubmit — this reduces disk I/O by ~10-30x
-while still giving /hv:feedback enough material to mine lessons from.
+while still giving the feedback skills enough material to mine lessons from.
 
 UserPromptSubmit: persist the raw user prompt for Codex sessions.
 PreCompact:       persist a transcript snapshot when Claude compacts context.
