@@ -16,18 +16,28 @@ hv init
 
 This is idempotent — safe to run multiple times. Creates the data directory and installs the plugin if not already done.
 
+Choose a runtime target when needed:
+
+```bash
+hv init --target claude
+hv init --target codex
+hv init --target both
+```
+
 **Step 2.** Link the current project:
 
 ```bash
-hv link
+hv link --target claude
 ```
 
 This:
 - Creates `.hivemind-link.json` in the project root (POSIX-normalized paths)
 - Creates `projects/{name}/`, `tasks/{name}/`, `level3/{name}/` in the data directory
 - Registers the project in `.hivemind.json`
-- Appends a `# Hivemind Project` block to `CLAUDE.md` with native `@import`
-  references to `architecture.md` and `rules.md` so Claude auto-loads them
+- Writes a managed `AGENTS.md` block as the canonical shared instructions file
+- For Claude targets, writes a managed `CLAUDE.md` shim with native `@import`
+  references to `architecture.md` and `rules.md`
+- For Codex targets, writes repo-local `.codex/hooks.json`
 
 **Step 3.** If this is an existing v2 installation, run the migration:
 

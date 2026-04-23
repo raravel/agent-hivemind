@@ -1,4 +1,4 @@
-"""Plugin installer — copies the hv plugin and registers it with Claude Code."""
+"""Claude plugin installer — copies the hv plugin and registers it."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def _run_claude_cmd(args: list[str]) -> tuple[bool, str]:
         return False, "timeout"
 
 
-def install_plugin(
+def install_claude_plugin(
     source_dir: Path,
     target_dir: Path | None = None,
 ) -> list[str]:
@@ -95,5 +95,6 @@ def _register_plugin(plugin_dir: Path) -> None:
         pass
 
 
-# Backward-compatible alias for existing callers.
-install_skills = install_plugin
+# Backward-compatible aliases for existing callers.
+install_plugin = install_claude_plugin
+install_skills = install_claude_plugin

@@ -239,6 +239,32 @@ class TestSessionLogHook:
         assert "Session end" in content
         assert "Here is my final answer." in content
 
+    def test_user_prompt_submit_writes_l3(self, tmp_path: Path) -> None:
+        data_path = tmp_path / "data"
+        data_path.mkdir()
+        (tmp_path / ".hivemind-link.json").write_text(
+            json.dumps({"project": "demo", "data_path": str(data_path), "targets": ["codex"]}),
+            encoding="utf-8",
+        )
+
+        out = _run_hook(
+            _SESSION_LOG,
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "abcdef1234567890",
+                "cwd": str(tmp_path),
+                "user_prompt": "please implement the next task",
+            },
+            cwd=str(tmp_path),
+        )
+        assert out["status"] == "approve"
+
+        files = list((data_path / "level3" / "demo").glob("*.md"))
+        assert len(files) == 1
+        content = files[0].read_text(encoding="utf-8")
+        assert "User prompt" in content
+        assert "please implement the next task" in content
+
     def test_windows_path_fallback(self, tmp_path: Path) -> None:
         """Windows-style path on POSIX falls back to default location."""
         if sys.platform == "win32":

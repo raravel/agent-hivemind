@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from unittest import mock
 
+from hivemind.installer.codex_plugin import install_codex_plugin
 from hivemind.installer.skills import install_plugin
 from hivemind.installer.hooks import install_hooks
 from hivemind.installer.profiles import install_profiles
@@ -55,6 +56,25 @@ def _make_plugin_source(base: Path, *, skills: list[str] | None = None, hooks: b
         (hooks_dir / "hv_pre_commit.py").write_text(
             "#!/usr/bin/env python3\n", encoding="utf-8"
         )
+
+    return src
+
+
+def _make_codex_plugin_source(base: Path, *, skills: list[str] | None = None) -> Path:
+    """Create a minimal Codex plugin source directory structure."""
+    src = base / "codex_plugin_src"
+    plugin_meta = src / ".codex-plugin"
+    plugin_meta.mkdir(parents=True)
+    (plugin_meta / "plugin.json").write_text(
+        json.dumps({"name": "hv", "version": "1.0.0", "skills": "./skills/"}),
+        encoding="utf-8",
+    )
+
+    if skills:
+        for name in skills:
+            skill_dir = src / "skills" / name
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            (skill_dir / "SKILL.md").write_text(f"# {name}", encoding="utf-8")
 
     return src
 
@@ -224,6 +244,35 @@ class TestInstallHooks:
 
         install_hooks(source, settings)
         assert settings.exists()
+
+
+class TestInstallCodexPlugin:
+    """Tests for Codex plugin installation."""
+
+    def test_installs_skills(self, tmp_path: Path) -> None:
+        source = _make_codex_plugin_source(tmp_path, skills=["plan", "task"])
+        target = tmp_path / ".codex" / "plugins" / "hv"
+        marketplace = tmp_path / ".agents" / "plugins" / "marketplace.json"
+
+        result = install_codex_plugin(source, target, marketplace)
+
+        assert "skill:plan" in result
+        assert "skill:task" in result
+        assert (target / "skills" / "plan" / "SKILL.md").exists()
+
+    def test_upserts_personal_marketplace(self, tmp_path: Path) -> None:
+        source = _make_codex_plugin_source(tmp_path, skills=["plan"])
+        target = tmp_path / ".codex" / "plugins" / "hv"
+        marketplace = tmp_path / ".agents" / "plugins" / "marketplace.json"
+
+        install_codex_plugin(source, target, marketplace)
+
+        data = json.loads(marketplace.read_text(encoding="utf-8"))
+        assert data["name"] == "agent-hivemind-local"
+        assert any(
+            plugin["name"] == "hv" and plugin["source"]["path"] == "./.codex/plugins/hv"
+            for plugin in data["plugins"]
+        )
 
 
 # ---------------------------------------------------------------------------

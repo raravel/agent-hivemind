@@ -406,6 +406,7 @@ class TestMigrateV3LinkFile:
         )
         assert "C:" not in link["data_path"]
         assert "\\" not in link["data_path"]
+        assert link["targets"] == ["claude"]
 
 
 class TestMigrateV3ClaudeMd:
@@ -430,6 +431,7 @@ class TestMigrateV3ClaudeMd:
         )
         content = (project_dir / "CLAUDE.md").read_text(encoding="utf-8")
         assert "obsidian-import" not in content
+        assert (project_dir / "AGENTS.md").exists()
 
     def test_at_imports_added(self, tmp_path: Path) -> None:
         data = _make_v2_data(tmp_path)
@@ -451,6 +453,25 @@ class TestMigrateV3ClaudeMd:
         assert "@" in content
         assert "architecture.md" in content
         assert "rules.md" in content
+
+    def test_codex_hooks_created_for_codex_target(self, tmp_path: Path) -> None:
+        data = _make_v2_data(tmp_path)
+        project_dir = tmp_path / "demo"
+        project_dir.mkdir()
+        (project_dir / ".hivemind-link.json").write_text(
+            json.dumps(
+                {"project": "demo", "data_path": str(data), "targets": ["codex"]},
+            ),
+            encoding="utf-8",
+        )
+        migrate_v2_to_v3(
+            data,
+            project_dirs=[project_dir],
+            backup=False,
+            claude_settings=tmp_path / "none.json",
+        )
+        hooks = json.loads((project_dir / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+        assert "UserPromptSubmit" in hooks["hooks"]
 
 
 class TestMigrateV3NodeHooks:

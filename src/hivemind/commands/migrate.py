@@ -18,6 +18,7 @@ from hivemind.core.config import (
     default_config,
     normalize_data_path,
 )
+from hivemind.core.instructions import write_codex_hooks_file, write_instruction_files
 
 
 def detect_v1(data_path: Path) -> bool:
@@ -197,10 +198,27 @@ def _fix_link_json(project_dir: Path, data_path: Path) -> bool:
 
     current = str(link.get("data_path", ""))
     desired = data_path_for_storage(data_path)
-    if current == desired:
-        return False
+    changed = False
+    if current != desired:
+        link["data_path"] = desired
+        changed = True
 
-    link["data_path"] = desired
+    raw_targets = link.get("targets")
+    desired_targets = ["claude"]
+    if isinstance(raw_targets, list):
+        values = [
+            item
+            for item in raw_targets
+            if isinstance(item, str) and item in {"claude", "codex"}
+        ]
+        if values:
+            desired_targets = sorted(dict.fromkeys(values))
+    if link.get("targets") != desired_targets:
+        link["targets"] = desired_targets
+        changed = True
+
+    if not changed:
+        return False
     link_file.write_text(
         json.dumps(link, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
@@ -333,6 +351,18 @@ def _update_config_v3(config_path: Path) -> list[str]:
     if "parallel" not in data or not isinstance(data["parallel"], dict):
         data["parallel"] = {"max_concurrency": 2}
         changes.append("parallel.max_concurrency = 2")
+    runtime = data.get("runtime")
+    if not isinstance(runtime, dict):
+        data["runtime"] = defaults["runtime"]
+        changes.append("runtime seeded")
+    else:
+        if runtime.get("default_target") not in {"claude", "codex"}:
+            runtime["default_target"] = "claude"
+            changes.append("runtime.default_target = claude")
+        enabled = runtime.get("enabled_targets")
+        if not isinstance(enabled, list) or not enabled:
+            runtime["enabled_targets"] = ["claude"]
+            changes.append("runtime.enabled_targets = ['claude']")
 
     raw_path = data.get("data_path")
     if isinstance(raw_path, str):
@@ -420,6 +450,8 @@ def migrate_v2_to_v3(
         "link_files_normalized": [],
         "claude_md_cleaned": [],
         "claude_md_imports_added": [],
+        "instruction_files_updated": [],
+        "codex_hooks_updated": [],
         "verify_md_renamed": [],
         "l3_archived": 0,
         "node_hook_entries_removed": 0,
@@ -458,16 +490,39 @@ def migrate_v2_to_v3(
 
             link_file = proj_dir / ".hivemind-link.json"
             project = None
+            targets = ["claude"]
             if link_file.exists():
                 try:
                     link = json.loads(link_file.read_text(encoding="utf-8"))
                     project = link.get("project")
+                    raw_targets = link.get("targets")
+                    if isinstance(raw_targets, list):
+                        values = [
+                            item
+                            for item in raw_targets
+                            if isinstance(item, str) and item in {"claude", "codex"}
+                        ]
+                        if values:
+                            targets = sorted(dict.fromkeys(values))
                 except (OSError, json.JSONDecodeError):
                     project = None
             if project and _ensure_claude_md_imports(
                 claude_md, str(project), posix_data_path
             ):
                 summary["claude_md_imports_added"].append(str(proj_dir))
+            if project:
+                changed = write_instruction_files(
+                    proj_dir,
+                    project=str(project),
+                    data_path=posix_data_path,
+                    targets=targets,
+                )
+                if changed:
+                    summary["instruction_files_updated"].append(
+                        f"{proj_dir}: {', '.join(changed)}"
+                    )
+                if "codex" in targets and write_codex_hooks_file(proj_dir):
+                    summary["codex_hooks_updated"].append(str(proj_dir))
 
     return summary
 
@@ -503,6 +558,18 @@ def print_v3_migration_summary(summary: dict[str, Any]) -> None:
         for line in imports_added:
             click.echo(f"    {line}")
 
+    instruction_files = summary.get("instruction_files_updated", [])
+    if instruction_files:
+        click.echo("  Instruction files updated:")
+        for line in instruction_files:
+            click.echo(f"    {line}")
+
+    codex_hooks = summary.get("codex_hooks_updated", [])
+    if codex_hooks:
+        click.echo("  Codex hooks updated:")
+        for line in codex_hooks:
+            click.echo(f"    {line}")
+
     renamed = summary.get("verify_md_renamed", [])
     if renamed:
         click.echo("  Renamed:")
@@ -529,6 +596,8 @@ def print_v3_migration_summary(summary: dict[str, Any]) -> None:
             "link_files_normalized",
             "claude_md_cleaned",
             "claude_md_imports_added",
+            "instruction_files_updated",
+            "codex_hooks_updated",
             "verify_md_renamed",
             "l3_archived",
             "node_hook_entries_removed",

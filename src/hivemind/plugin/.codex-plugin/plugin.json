@@ -1,0 +1,30 @@
+{
+  "name": "hv",
+  "version": "3.1.0",
+  "description": "Agent Hivemind runtime plugin for Codex. Provides reusable harness skills for planning, verification, feedback, search, and task management.",
+  "author": {
+    "name": "raravel",
+    "url": "https://github.com/raravel"
+  },
+  "homepage": "https://github.com/raravel/agent-hivemind",
+  "repository": "https://github.com/raravel/agent-hivemind",
+  "license": "MIT",
+  "keywords": ["harness", "agent", "hivemind", "task", "feedback", "codex"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Agent Hivemind",
+    "shortDescription": "Harness skills for managed coding workflows.",
+    "longDescription": "Bundle planning, task, verification, feedback, and search workflows for repository-linked Agent Hivemind projects.",
+    "developerName": "raravel",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/raravel/agent-hivemind",
+    "privacyPolicyURL": "https://openai.com/policies/row-privacy-policy/",
+    "termsOfServiceURL": "https://openai.com/policies/row-terms-of-use/",
+    "defaultPrompt": [
+      "Use Agent Hivemind to plan this feature and create tracked tasks.",
+      "Use Agent Hivemind to verify the next ready task in this repo."
+    ],
+    "brandColor": "#0F766E"
+  }
+}

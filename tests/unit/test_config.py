@@ -11,6 +11,7 @@ from hivemind.core.config import (
     HivemindConfig,
     data_path_for_storage,
     default_config,
+    expand_target_selection,
     normalize_data_path,
 )
 
@@ -39,6 +40,7 @@ class TestDefaultConfig:
             "parallel",
             "projects",
             "filter_patterns",
+            "runtime",
         }
         assert set(cfg.keys()) == expected_keys
 
@@ -88,6 +90,25 @@ class TestDefaultConfig:
     def test_filter_patterns_empty(self) -> None:
         cfg = default_config()
         assert cfg["filter_patterns"] == []
+
+    def test_runtime_defaults_to_claude(self) -> None:
+        cfg = default_config()
+        assert cfg["runtime"]["default_target"] == "claude"
+        assert cfg["runtime"]["enabled_targets"] == ["claude"]
+
+
+class TestTargetExpansion:
+    """Tests for runtime target parsing helpers."""
+
+    def test_expand_single_target(self) -> None:
+        assert expand_target_selection("claude") == ["claude"]
+
+    def test_expand_both_targets(self) -> None:
+        assert expand_target_selection("both") == ["claude", "codex"]
+
+    def test_expand_invalid_target_raises(self) -> None:
+        with pytest.raises(ValueError):
+            expand_target_selection("invalid")
 
 
 class TestHivemindConfigLoadSave:
@@ -218,6 +239,19 @@ class TestProjectManagement:
         proj = loaded.get_project("myproject")
         assert proj is not None
         assert proj["prefix"] == "MP"
+
+    def test_runtime_targets_persist(self, tmp_path: Path) -> None:
+        config_path = tmp_path / ".hivemind.json"
+        cfg = HivemindConfig(config_path, default_config())
+        cfg.set_runtime_targets(
+            default_target="codex",
+            enabled_targets=["claude", "codex"],
+        )
+        cfg.save()
+
+        loaded = HivemindConfig.load(config_path)
+        assert loaded.default_target == "codex"
+        assert loaded.enabled_targets == ["claude", "codex"]
 
 
 class TestDataPath:

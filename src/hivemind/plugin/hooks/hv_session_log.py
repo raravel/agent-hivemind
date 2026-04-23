@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Session summary hook (PreCompact + Stop events).
+"""Session summary hook (UserPromptSubmit, PreCompact, Stop events).
 
 Writes a compact L3 session record once per session/compaction boundary
 instead of on every UserPromptSubmit — this reduces disk I/O by ~10-30x
 while still giving /hv:feedback enough material to mine lessons from.
 
-PreCompact: fires before the runtime compacts the conversation. Good
-            moment to persist the current session state so feedback
-            extraction can see it later.
-Stop:       fires when the session ends. Final flush.
+UserPromptSubmit: persist the raw user prompt for Codex sessions.
+PreCompact:       persist a transcript snapshot when Claude compacts context.
+Stop:             final assistant flush when the session ends.
 
 Input:  JSON on stdin from Claude Code, including transcript_path when
         available.
@@ -105,6 +104,12 @@ def _summarize_transcript(transcript_path: Path | None) -> str:
     return "\n".join(out_lines[-20:])
 
 
+def _append_entry(log_file: Path, title: str, body: str, timestamp: str) -> None:
+    """Append one markdown section to the session log."""
+    with log_file.open("a", encoding="utf-8") as f:
+        f.write(f"## {title} [{timestamp}]\n\n{body}\n\n")
+
+
 def main() -> None:
     data = _read_input()
     if data is None:
@@ -151,28 +156,32 @@ def main() -> None:
 
     timestamp = datetime.now().strftime("%H:%M:%S")
 
-    if event == "PreCompact":
+    if event == "UserPromptSubmit":
+        prompt = data.get("user_prompt") or data.get("prompt") or data.get("input")
+        if isinstance(prompt, str) and prompt.strip():
+            snippet = prompt.strip()
+            if len(snippet) > 2000:
+                snippet = snippet[:2000] + " [...]"
+            _append_entry(log_file, "User prompt", snippet, timestamp)
+    elif event == "PreCompact":
         transcript_raw = data.get("transcript_path")
         transcript_path = (
             Path(str(transcript_raw)) if transcript_raw else None
         )
         summary = _summarize_transcript(transcript_path)
-        entry = (
-            f"## Compact snapshot [{timestamp}]\n\n"
-            + (summary if summary else "_(no transcript available)_\n")
-            + "\n"
+        _append_entry(
+            log_file,
+            "Compact snapshot",
+            summary if summary else "_(no transcript available)_",
+            timestamp,
         )
-        with log_file.open("a", encoding="utf-8") as f:
-            f.write(entry)
     elif event == "Stop":
         last = data.get("last_assistant_message") or ""
         if isinstance(last, str) and last.strip():
             snippet = last.strip()
             if len(snippet) > 2000:
                 snippet = snippet[:2000] + " [...]"
-            entry = f"## Session end [{timestamp}]\n\n{snippet}\n\n"
-            with log_file.open("a", encoding="utf-8") as f:
-                f.write(entry)
+            _append_entry(log_file, "Session end", snippet, timestamp)
 
     _approve()
 

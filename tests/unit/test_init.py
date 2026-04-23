@@ -50,6 +50,25 @@ def _make_plugin_source(base: Path, *, skills: list[str] | None = None, hooks: b
     return src
 
 
+def _make_codex_plugin_source(base: Path, *, skills: list[str] | None = None) -> Path:
+    """Create a minimal Codex plugin directory structure for testing."""
+    src = base / "plugin_src"
+    plugin_meta = src / ".codex-plugin"
+    plugin_meta.mkdir(parents=True)
+    (plugin_meta / "plugin.json").write_text(
+        json.dumps({"name": "hv", "version": "1.0.0", "skills": "./skills/"}),
+        encoding="utf-8",
+    )
+
+    if skills:
+        for name in skills:
+            skill_dir = src / "skills" / name
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            (skill_dir / "SKILL.md").write_text(f"# {name}", encoding="utf-8")
+
+    return src
+
+
 # ---------------------------------------------------------------------------
 # init_data_dir (existing behaviour, basic smoke tests)
 # ---------------------------------------------------------------------------
@@ -98,12 +117,13 @@ class TestRunInstallers:
 
         summary = run_installers(
             data / ".hivemind.json",
-            skills_source=plugin_src,
+            plugin_source=plugin_src,
         )
 
-        assert summary["skills_skipped"] is False
-        assert isinstance(summary["skills"], list)
-        assert "/hv:test" in summary["skills"]
+        runtime_summary = summary["claude"]
+        assert isinstance(runtime_summary, dict)
+        assert runtime_summary["skipped"] is False
+        assert "/hv:test" in runtime_summary["installed"]
 
     def test_skills_skipped_when_source_missing(
         self, tmp_path: Path
@@ -112,11 +132,13 @@ class TestRunInstallers:
 
         summary = run_installers(
             data / ".hivemind.json",
-            skills_source=tmp_path / "nonexistent",
+            plugin_source=tmp_path / "nonexistent",
         )
 
-        assert summary["skills_skipped"] is True
-        assert summary["skills"] == []
+        runtime_summary = summary["claude"]
+        assert isinstance(runtime_summary, dict)
+        assert runtime_summary["skipped"] is True
+        assert runtime_summary["installed"] == []
 
     @mock.patch("hivemind.installer.skills._run_claude_cmd", return_value=(True, "ok"))
     def test_hooks_installed_via_plugin(self, mock_cmd: mock.MagicMock, tmp_path: Path) -> None:
@@ -125,11 +147,12 @@ class TestRunInstallers:
 
         summary = run_installers(
             data / ".hivemind.json",
-            skills_source=plugin_src,
+            plugin_source=plugin_src,
         )
 
-        assert isinstance(summary["skills"], list)
-        assert "hook:hv_pre_commit" in summary["skills"]
+        runtime_summary = summary["claude"]
+        assert isinstance(runtime_summary, dict)
+        assert "hook:hv_pre_commit" in runtime_summary["installed"]
 
     @mock.patch("hivemind.installer.skills._run_claude_cmd", return_value=(True, "ok"))
     def test_profiles_installed(self, mock_cmd: mock.MagicMock, tmp_path: Path) -> None:
@@ -143,10 +166,25 @@ class TestRunInstallers:
 
         summary = run_installers(
             data / ".hivemind.json",
-            skills_source=plugin_src,
+            plugin_source=plugin_src,
         )
 
         assert summary["profiles"] is True
+
+    def test_codex_installed_when_source_exists(self, tmp_path: Path) -> None:
+        data = self._make_data_dir(tmp_path)
+        plugin_src = _make_codex_plugin_source(tmp_path, skills=["plan"])
+
+        summary = run_installers(
+            data / ".hivemind.json",
+            target="codex",
+            plugin_source=plugin_src,
+        )
+
+        runtime_summary = summary["codex"]
+        assert isinstance(runtime_summary, dict)
+        assert runtime_summary["skipped"] is False
+        assert "skill:plan" in runtime_summary["installed"]
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +258,7 @@ class TestInitCmdCLI:
         assert result.exit_code == 0
         assert "Initializing hivemind data at:" in result.output
         assert "Claude Code integration:" in result.output
+        assert "Codex integration:" in result.output
         assert "Done." in result.output
 
     def test_init_with_git_flag(self, tmp_path: Path) -> None:
@@ -280,3 +319,22 @@ class TestInitCmdCLI:
 
         assert result.exit_code == 0
         assert "skipped" in result.output
+
+    def test_init_with_codex_target_updates_runtime_config(
+        self, tmp_path: Path
+    ) -> None:
+        data = tmp_path / "hv-data"
+        plugin_src = _make_codex_plugin_source(tmp_path, skills=["plan"])
+
+        runner = CliRunner()
+        with mock.patch(
+            "hivemind.commands.init._PLUGIN_DIR", plugin_src
+        ):
+            result = runner.invoke(
+                init_cmd, ["--path", str(data), "--target", "codex"]
+            )
+
+        assert result.exit_code == 0
+        cfg = HivemindConfig.load(data / ".hivemind.json")
+        assert cfg.default_target == "codex"
+        assert cfg.enabled_targets == ["codex"]

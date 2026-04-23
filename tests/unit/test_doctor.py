@@ -180,7 +180,7 @@ class TestDoctorCLI:
     def test_run_checks_returns_list(self, tmp_path: Path) -> None:
         _, project_dir = _make_v3_workspace(tmp_path)
         results = run_checks(project_dir)
-        assert len(results) >= 6
+        assert len(results) >= 7
         assert all(r.severity in ("ok", "warn", "error") for r in results)
 
     def test_reports_error_on_missing_link(self, tmp_path: Path) -> None:
@@ -190,3 +190,10 @@ class TestDoctorCLI:
         link_results = [r for r in results if r.name == "Project link"]
         assert len(link_results) == 1
         assert link_results[0].severity in ("warn", "error")
+
+    def test_reports_agents_md_warning_when_missing(self, tmp_path: Path) -> None:
+        _, project_dir = _make_v3_workspace(tmp_path)
+        results = run_checks(project_dir)
+        agents = [r for r in results if r.name == "AGENTS.md"]
+        assert len(agents) == 1
+        assert agents[0].severity == "warn"
