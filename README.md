@@ -41,14 +41,32 @@ hv init
 
 This sets up:
 - `~/agent-hivemind-data/` — data directory for specs, tasks, and feedback
-- Claude Code plugin — installs all `/hv:*` skills automatically
+- Claude Code plugin by default — installs all `/hv:*` skills automatically
 - Model profiles — quality / balanced / budget presets
 
 That's it. `hv init` is the only CLI command you need to run manually.
 
+### Runtime targets
+
+`hv init` now supports runtime selection:
+
+```bash
+hv init --target claude
+hv init --target codex
+hv init --target both
+```
+
+- `claude` is the default and preserves the existing `/hv:*` flow.
+- `codex` installs the Codex plugin and personal marketplace entry.
+- `both` prepares both runtimes against the same data directory.
+
 ## Usage
 
-Everything happens inside **Claude Code** using `/hv:*` skills. No CLI commands needed after init.
+After `hv init`, most usage happens inside the target runtime rather than through the CLI.
+
+### Claude Code
+
+Claude keeps the existing `/hv:*` workflow.
 
 ### Step 1. Initialize a project — `/hv:init`
 
@@ -58,7 +76,7 @@ Open your project in Claude Code and run:
 /hv:init
 ```
 
-This links the current project to hivemind: creates the project data directories and adds the project info to CLAUDE.md. Your CLAUDE.md will contain:
+This links the current project to hivemind: creates the project data directories, writes a managed `AGENTS.md`, and for Claude also writes a managed `CLAUDE.md` shim. Your instruction files will contain:
 
 ```markdown
 # Hivemind Project
@@ -66,7 +84,7 @@ This links the current project to hivemind: creates the project data directories
 - data_path: ~/agent-hivemind-data
 ```
 
-That's all — rules and behaviors are handled by the `/hv:*` skills themselves.
+`AGENTS.md` is now the canonical shared instruction source. `CLAUDE.md` imports `@AGENTS.md` and keeps Claude-native `@.../architecture.md` and `@.../rules.md` imports.
 
 ### Step 2. Plan the project — `/hv:plan`
 
@@ -211,6 +229,22 @@ L3 (session logs)  →  L2 (structured lessons)  →  L1 (critical lessons)
 | `/hv:search` | Search past lessons with auto-read | Manual |
 | `/hv:important` | Promote/demote L1 lessons | Manual |
 | `/hv:audit` | Spec-code drift detection | Manual |
+
+### Codex
+
+Codex uses the same data repo and project link, but its invocation surface is different:
+
+- `hv init --target codex` installs the `hv` Codex plugin and marketplace entry
+- `hv link --target codex` writes `AGENTS.md` and repo-local `.codex/hooks.json`
+- Codex reads `AGENTS.md` directly; it does not support Claude-style `@import`
+- Use the installed `hv` plugin skills through Codex plugin/skills UX or natural-language requests that mention the `hv` plugin
+
+In practice:
+
+```text
+Use the hv plugin to plan this feature and create tracked tasks.
+Use the hv plugin to run verification for the current project.
+```
 
 ## Model profiles
 

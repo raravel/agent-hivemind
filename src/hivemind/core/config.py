@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_DATA_PATH = "~/agent-hivemind-data"
+SUPPORTED_TARGETS = ("claude", "codex")
 
 # Per-Mtoken USD pricing, seeded from public Anthropic pricing. Users may
 # override in .hivemind.json; values are cents-level estimates.
@@ -16,6 +17,15 @@ DEFAULT_PRICING: dict[str, dict[str, float]] = {
     "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
     "claude-haiku-4-5": {"input": 0.8, "output": 4.0},
 }
+
+
+def expand_target_selection(target: str) -> list[str]:
+    """Expand a target selector into concrete runtime targets."""
+    if target == "both":
+        return list(SUPPORTED_TARGETS)
+    if target in SUPPORTED_TARGETS:
+        return [target]
+    raise ValueError(f"Unsupported target: {target}")
 
 
 def default_config() -> dict[str, Any]:
@@ -47,6 +57,10 @@ def default_config() -> dict[str, Any]:
         "parallel": {"max_concurrency": 2},
         "projects": {},
         "filter_patterns": [],
+        "runtime": {
+            "default_target": "claude",
+            "enabled_targets": ["claude"],
+        },
     }
 
 
@@ -149,11 +163,51 @@ class HivemindConfig:
             "linked_path": linked_path,
         }
 
+    def set_runtime_targets(
+        self,
+        *,
+        default_target: str,
+        enabled_targets: list[str],
+    ) -> None:
+        """Persist runtime target defaults in config."""
+        runtime = self._data.setdefault("runtime", {})
+        if not isinstance(runtime, dict):
+            runtime = {}
+            self._data["runtime"] = runtime
+        runtime["default_target"] = default_target
+        runtime["enabled_targets"] = enabled_targets
+
     @property
     def data_path(self) -> Path:
         """Return resolved data path, cross-platform safe."""
         raw = self._data.get("data_path")
         return normalize_data_path(raw if isinstance(raw, str) else None)
+
+    @property
+    def default_target(self) -> str:
+        """Return the configured default runtime target."""
+        runtime = self._data.get("runtime")
+        if isinstance(runtime, dict):
+            value = runtime.get("default_target")
+            if isinstance(value, str) and value in SUPPORTED_TARGETS:
+                return value
+        return "claude"
+
+    @property
+    def enabled_targets(self) -> list[str]:
+        """Return configured runtime targets, defaulting to Claude only."""
+        runtime = self._data.get("runtime")
+        if isinstance(runtime, dict):
+            raw = runtime.get("enabled_targets")
+            if isinstance(raw, list):
+                values = [
+                    item
+                    for item in raw
+                    if isinstance(item, str) and item in SUPPORTED_TARGETS
+                ]
+                if values:
+                    return values
+        return [self.default_target]
 
     @property
     def raw(self) -> dict[str, Any]:

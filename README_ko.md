@@ -41,14 +41,32 @@ hv init
 
 이것으로:
 - `~/agent-hivemind-data/` — 스펙, 태스크, 피드백용 데이터 디렉토리 생성
-- Claude Code 플러그인 — `/hv:*` 스킬 자동 설치
+- 기본적으로 Claude Code 플러그인 — `/hv:*` 스킬 자동 설치
 - 모델 프로파일 — quality / balanced / budget 프리셋 설정
 
 끝입니다. `hv init`이 직접 실행해야 하는 유일한 CLI 명령어입니다.
 
+### 런타임 타깃
+
+이제 `hv init`은 대상 런타임을 선택할 수 있습니다:
+
+```bash
+hv init --target claude
+hv init --target codex
+hv init --target both
+```
+
+- `claude`는 기본값이며 기존 `/hv:*` 흐름을 유지합니다.
+- `codex`는 Codex 플러그인과 개인 marketplace 엔트리를 설치합니다.
+- `both`는 같은 데이터 디렉토리에 대해 둘 다 준비합니다.
+
 ## 사용법
 
-모든 작업은 **Claude Code** 안에서 `/hv:*` 스킬로 진행합니다. init 이후 CLI 명령어는 필요 없습니다.
+`hv init` 이후에는 주로 대상 런타임 안에서 작업합니다.
+
+### Claude Code
+
+Claude는 기존 `/hv:*` 워크플로를 그대로 사용합니다.
 
 ### Step 1. 프로젝트 초기화 — `/hv:init`
 
@@ -58,7 +76,7 @@ Claude Code에서 프로젝트를 열고 실행:
 /hv:init
 ```
 
-현재 프로젝트를 hivemind에 연결하고, 프로젝트 데이터 디렉토리를 생성하며, CLAUDE.md에 프로젝트 정보를 추가합니다:
+현재 프로젝트를 hivemind에 연결하고, 프로젝트 데이터 디렉토리를 생성하며, 관리되는 `AGENTS.md`를 쓰고 Claude용이면 `CLAUDE.md` shim도 함께 씁니다:
 
 ```markdown
 # Hivemind Project
@@ -66,7 +84,7 @@ Claude Code에서 프로젝트를 열고 실행:
 - data_path: ~/agent-hivemind-data
 ```
 
-이것이 전부입니다 — 규칙과 동작은 `/hv:*` 스킬이 알아서 처리합니다.
+이제 `AGENTS.md`가 공통 canonical instruction 파일입니다. `CLAUDE.md`는 `@AGENTS.md`와 Claude 전용 `@.../architecture.md`, `@.../rules.md` import를 담는 얇은 shim 역할만 합니다.
 
 ### Step 2. 계획 수립 — `/hv:plan`
 
@@ -184,6 +202,22 @@ L3 (세션 로그)  →  L2 (구조화된 교훈)  →  L1 (핵심 교훈)
 | `/hv:search` | 과거 교훈 검색 + 자동 읽기 | 수동 |
 | `/hv:important` | L1 교훈 승격/강등 | 수동 |
 | `/hv:audit` | 스펙-코드 드리프트 탐지 | 수동 |
+
+### Codex
+
+Codex는 같은 데이터 저장소와 프로젝트 링크를 쓰지만 호출 방식이 다릅니다.
+
+- `hv init --target codex`로 `hv` Codex 플러그인과 marketplace 엔트리를 설치
+- `hv link --target codex`로 `AGENTS.md`와 repo-local `.codex/hooks.json` 생성
+- Codex는 `AGENTS.md`를 직접 읽고, Claude식 `@import`는 지원하지 않음
+- Codex에서는 plugin/skills UX 또는 `hv` 플러그인을 언급하는 자연어 요청으로 사용
+
+예:
+
+```text
+Use the hv plugin to plan this feature and create tracked tasks.
+Use the hv plugin to run verification for the current project.
+```
 
 ## 모델 프로파일
 

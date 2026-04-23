@@ -113,6 +113,7 @@ class TestLinkProject:
         link_data = json.loads(link_file.read_text(encoding="utf-8"))
         assert link_data["project"] == "testproj"
         assert link_data["data_path"] == str(data_path)
+        assert link_data["targets"] == ["claude"]
 
     def test_creates_data_directories(self, tmp_path: Path) -> None:
         project_dir, data_path = self._setup_workspace(tmp_path)
@@ -165,37 +166,53 @@ class TestLinkProject:
             project_dir
         )
 
-    def test_skip_if_already_linked(self, tmp_path: Path) -> None:
+    def test_refresh_if_already_linked(self, tmp_path: Path) -> None:
         project_dir, data_path = self._setup_workspace(tmp_path)
 
         # Pre-create link file
         link_file = project_dir / ".hivemind-link.json"
         link_file.write_text(
-            json.dumps({"project": "existing", "data_path": str(data_path)}),
+            json.dumps(
+                {
+                    "project": "existing",
+                    "data_path": str(data_path),
+                    "targets": ["claude"],
+                }
+            ),
             encoding="utf-8",
         )
 
+        config_path = data_path / ".hivemind.json"
         old_cwd = os.getcwd()
         try:
             os.chdir(project_dir)
-            result = link_project(project_dir, name="testproj")
+            with patch("hivemind.commands.link._find_config") as mock_fc:
+                from hivemind.core.config import HivemindConfig
+
+                cfg = HivemindConfig.load(config_path)
+                mock_fc.return_value = (cfg, data_path)
+
+                result = link_project(project_dir, name="testproj", target="codex")
         finally:
             os.chdir(old_cwd)
 
         assert result == "existing"
-        # Config should NOT have "testproj" registered
+        refreshed = json.loads(link_file.read_text(encoding="utf-8"))
+        assert refreshed["targets"] == ["claude", "codex"]
         cfg_data = json.loads(
             (data_path / ".hivemind.json").read_text(encoding="utf-8")
         )
-        assert "testproj" not in cfg_data.get("projects", {})
+        assert "existing" in cfg_data.get("projects", {})
 
-    def test_appends_to_claude_md(self, tmp_path: Path) -> None:
+    def test_writes_managed_blocks(self, tmp_path: Path) -> None:
         project_dir, data_path = self._setup_workspace(tmp_path)
         config_path = data_path / ".hivemind.json"
 
         # Create a CLAUDE.md in project dir
         claude_md = project_dir / "CLAUDE.md"
         claude_md.write_text("# My Project\n", encoding="utf-8")
+        agents_md = project_dir / "AGENTS.md"
+        agents_md.write_text("# Repo Rules\n", encoding="utf-8")
 
         old_cwd = os.getcwd()
         try:
@@ -213,11 +230,13 @@ class TestLinkProject:
             os.chdir(old_cwd)
 
         content = claude_md.read_text(encoding="utf-8")
-        assert "Hivemind Project" in content
-        assert "project: testproj" in content
+        assert "<!-- hivemind:start -->" in content
+        assert "@AGENTS.md" in content
+        agents_content = agents_md.read_text(encoding="utf-8")
+        assert "Hivemind Project" in agents_content
+        assert "tech-stack.md" in agents_content
 
-    def test_claude_md_created_if_missing(self, tmp_path: Path) -> None:
-        """hv link now always creates CLAUDE.md with hivemind rules."""
+    def test_agents_md_created_for_codex_target(self, tmp_path: Path) -> None:
         project_dir, data_path = self._setup_workspace(tmp_path)
         config_path = data_path / ".hivemind.json"
 
@@ -232,15 +251,37 @@ class TestLinkProject:
                 cfg = HivemindConfig.load(config_path)
                 mock_fc.return_value = (cfg, data_path)
 
-                link_project(project_dir, name="testproj")
+                link_project(project_dir, name="testproj", target="codex")
         finally:
             os.chdir(old_cwd)
 
-        # CLAUDE.md should have been created with hivemind project info
-        assert (project_dir / "CLAUDE.md").exists()
-        content = (project_dir / "CLAUDE.md").read_text(encoding="utf-8")
+        assert (project_dir / "AGENTS.md").exists()
+        content = (project_dir / "AGENTS.md").read_text(encoding="utf-8")
         assert "Hivemind Project" in content
         assert "project: testproj" in content
+        assert not (project_dir / "CLAUDE.md").exists()
+        hooks = json.loads((project_dir / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+        assert "UserPromptSubmit" in hooks["hooks"]
+
+    def test_claude_target_creates_agents_and_claude(self, tmp_path: Path) -> None:
+        project_dir, data_path = self._setup_workspace(tmp_path)
+        config_path = data_path / ".hivemind.json"
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(project_dir)
+            with patch("hivemind.commands.link._find_config") as mock_fc:
+                from hivemind.core.config import HivemindConfig
+
+                cfg = HivemindConfig.load(config_path)
+                mock_fc.return_value = (cfg, data_path)
+
+                link_project(project_dir, name="testproj", target="claude")
+        finally:
+            os.chdir(old_cwd)
+
+        assert (project_dir / "AGENTS.md").exists()
+        assert (project_dir / "CLAUDE.md").exists()
 
 
 class TestLinkCli:
@@ -279,7 +320,13 @@ class TestLinkCli:
         # Pre-create link file
         link_file = project_dir / ".hivemind-link.json"
         link_file.write_text(
-            json.dumps({"project": "prev", "data_path": str(data_path)}),
+            json.dumps(
+                {
+                    "project": "prev",
+                    "data_path": str(data_path),
+                    "targets": ["claude"],
+                }
+            ),
             encoding="utf-8",
         )
 
@@ -287,9 +334,16 @@ class TestLinkCli:
         old_cwd = os.getcwd()
         try:
             os.chdir(project_dir)
-            result = runner.invoke(link_cmd, ["--name", "newname"])
+            with patch("hivemind.commands.link._find_config") as mock_fc:
+                from hivemind.core.config import HivemindConfig
+
+                config_path = data_path / ".hivemind.json"
+                cfg = HivemindConfig.load(config_path)
+                mock_fc.return_value = (cfg, data_path)
+
+                result = runner.invoke(link_cmd, ["--name", "newname", "--target", "codex"])
         finally:
             os.chdir(old_cwd)
 
         assert result.exit_code == 0, result.output
-        assert "Already linked" in result.output
+        assert "Refreshing existing link" in result.output

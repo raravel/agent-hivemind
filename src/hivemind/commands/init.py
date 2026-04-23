@@ -12,9 +12,14 @@ from hivemind.commands.migrate import (
     migrate_v1_to_v2,
     print_migration_summary,
 )
-from hivemind.core.config import HivemindConfig, default_config
+from hivemind.core.config import (
+    HivemindConfig,
+    default_config,
+    expand_target_selection,
+)
+from hivemind.installer.codex_plugin import install_codex_plugin
 from hivemind.installer.profiles import install_profiles
-from hivemind.installer.skills import install_plugin
+from hivemind.installer.skills import install_claude_plugin
 
 
 _IMPORTANT_FRONTMATTER = "---\nhits: {}\n---\n"
@@ -84,9 +89,10 @@ def init_data_dir(data_path: Path) -> list[str]:
 def run_installers(
     config_path: Path,
     *,
-    skills_source: Path | None = None,
-) -> dict[str, list[str] | bool]:
-    """Run all Claude Code installers and return a summary.
+    target: str = "claude",
+    plugin_source: Path | None = None,
+) -> dict[str, object]:
+    """Run runtime installers and return a summary.
 
     Parameters
     ----------
@@ -98,20 +104,25 @@ def run_installers(
     Returns
     -------
     dict
-        Keys: ``skills`` (list[str]), ``hooks`` (bool), ``profiles`` (bool),
-        ``skills_skipped`` (bool).
+        Keys: ``targets`` (list[str]), runtime sections, and ``profiles`` (bool).
     """
-    summary: dict[str, list[str] | bool] = {}
+    summary: dict[str, object] = {"targets": expand_target_selection(target)}
 
-    # --- Plugin (skills + hooks) ---------------------------------------------
-    src = skills_source if skills_source is not None else _PLUGIN_DIR
-    if src.is_dir() and (src / ".claude-plugin" / "plugin.json").exists():
-        installed = install_plugin(src)
-        summary["skills"] = installed
-        summary["skills_skipped"] = False
-    else:
-        summary["skills"] = []
-        summary["skills_skipped"] = True
+    src = plugin_source if plugin_source is not None else _PLUGIN_DIR
+    for runtime in expand_target_selection(target):
+        manifest_dir = src / f".{runtime}-plugin" / "plugin.json"
+        installed: list[str] = []
+        skipped = True
+        if src.is_dir() and manifest_dir.exists():
+            if runtime == "claude":
+                installed = install_claude_plugin(src)
+            elif runtime == "codex":
+                installed = install_codex_plugin(src)
+            skipped = False
+        summary[runtime] = {
+            "installed": installed,
+            "skipped": skipped,
+        }
 
     # --- Profiles ------------------------------------------------------------
     summary["profiles"] = install_profiles(config_path)
@@ -119,27 +130,40 @@ def run_installers(
     return summary
 
 
-def _print_installer_summary(summary: dict[str, list[str] | bool]) -> None:
+def _print_runtime_section(
+    label: str, runtime_summary: dict[str, object] | None
+) -> None:
+    """Print one runtime installer summary."""
+    click.echo(f"{label} integration:")
+    if runtime_summary is None:
+        click.echo("  Plugin: not requested")
+        return
+
+    installed = runtime_summary.get("installed", [])
+    skipped = runtime_summary.get("skipped")
+    if skipped:
+        click.echo("  Plugin: skipped (source manifest not found)")
+        return
+    if isinstance(installed, list) and installed:
+        click.echo(f"  Components: {len(installed)} installed")
+        for item in installed:
+            click.echo(f"    - {item}")
+    else:
+        click.echo("  Components: none to install")
+
+
+def _print_installer_summary(summary: dict[str, object]) -> None:
     """Print a human-readable summary of what the installers did."""
     click.echo("")
-    click.echo("Claude Code integration:")
-
-    # Skills
-    skills = summary.get("skills", [])
-    if summary.get("skills_skipped"):
-        click.echo("  Skills: skipped (source directory not found)")
-    elif isinstance(skills, list) and skills:
-        click.echo(f"  Skills: {len(skills)} installed")
-        for s in skills:
-            click.echo(f"    - {s}")
-    else:
-        click.echo("  Skills: none to install")
-
-    # Hooks
-    if summary.get("hooks"):
-        click.echo("  Hooks: installed")
-    else:
-        click.echo("  Hooks: already up to date")
+    _print_runtime_section(
+        "Claude Code",
+        summary.get("claude") if isinstance(summary.get("claude"), dict) else None,
+    )
+    click.echo("")
+    _print_runtime_section(
+        "Codex",
+        summary.get("codex") if isinstance(summary.get("codex"), dict) else None,
+    )
 
     # Profiles
     if summary.get("profiles"):
@@ -185,7 +209,14 @@ def _init_git(data_path: Path, config_path: Path) -> bool:
     default=False,
     help="Initialize a git repo in the data directory and enable auto-commit.",
 )
-def init_cmd(path: str | None, *, use_git: bool) -> None:
+@click.option(
+    "--target",
+    type=click.Choice(["claude", "codex", "both"]),
+    default="claude",
+    show_default=True,
+    help="Install integrations for Claude Code, Codex, or both.",
+)
+def init_cmd(path: str | None, *, use_git: bool, target: str) -> None:
     """Initialize a new hivemind workspace."""
     if path is not None:
         data_path = Path(path).expanduser().resolve()
@@ -212,7 +243,15 @@ def init_cmd(path: str | None, *, use_git: bool) -> None:
 
     # --- Run installers ------------------------------------------------------
     config_path = data_path / ".hivemind.json"
-    summary = run_installers(config_path)
+    cfg = HivemindConfig.load(config_path)
+    enabled_targets = expand_target_selection(target)
+    cfg.set_runtime_targets(
+        default_target=enabled_targets[0],
+        enabled_targets=enabled_targets,
+    )
+    cfg.save()
+
+    summary = run_installers(config_path, target=target)
     _print_installer_summary(summary)
 
     # --- Git -----------------------------------------------------------------

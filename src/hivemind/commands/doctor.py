@@ -13,6 +13,7 @@ from typing import Any
 import click
 
 from hivemind.core.config import HivemindConfig, normalize_data_path
+from hivemind.core.instructions import normalize_targets
 
 Severity = str  # "ok" | "warn" | "error"
 
@@ -103,7 +104,7 @@ def _check_data_directory(cfg: HivemindConfig | None) -> CheckResult:
     return _ok("Data directory", f"{data_path} (all tiers present)")
 
 
-def _check_plugin_installed() -> CheckResult:
+def _check_claude_plugin_installed() -> CheckResult:
     plugin_dir = Path("~/.claude/plugins/hv").expanduser()
     if not plugin_dir.exists():
         return _err(
@@ -140,9 +141,41 @@ def _check_plugin_installed() -> CheckResult:
     if not hook_files:
         return _warn(
             "Claude Code plugin",
-            f"{detail} — no python hooks found (PreCompact/Stop logging disabled)",
+            f"{detail} — no python hooks found (session logging disabled)",
         )
     return _ok("Claude Code plugin", detail)
+
+
+def _check_codex_plugin_installed() -> CheckResult:
+    plugin_dir = Path("~/.codex/plugins/hv").expanduser()
+    if not plugin_dir.exists():
+        return _err(
+            "Codex plugin",
+            f"not installed at {plugin_dir} — run `hv init --target codex`",
+        )
+
+    manifest = plugin_dir / ".codex-plugin" / "plugin.json"
+    if not manifest.exists():
+        return _err(
+            "Codex plugin",
+            f"{plugin_dir} exists but missing .codex-plugin/plugin.json",
+        )
+
+    skills_dir = plugin_dir / "skills"
+    skills = (
+        [d.name for d in sorted(skills_dir.iterdir()) if d.is_dir()]
+        if skills_dir.exists()
+        else []
+    )
+    marketplace = Path("~/.agents/plugins/marketplace.json").expanduser()
+    marketplace_note = "marketplace missing"
+    if marketplace.exists():
+        marketplace_note = str(marketplace)
+
+    detail = f"{plugin_dir} ({len(skills)} skills, {marketplace_note})"
+    if not skills:
+        return _warn("Codex plugin", f"{detail} — no skills found")
+    return _ok("Codex plugin", detail)
 
 
 def _check_project_link(project_dir: Path) -> tuple[CheckResult, dict[str, Any] | None]:
@@ -184,6 +217,22 @@ def _check_project_link(project_dir: Path) -> tuple[CheckResult, dict[str, Any] 
     return _ok("Project link", f"{project} -> {resolved}"), link
 
 
+def _determine_targets(
+    link: dict[str, Any] | None,
+    cfg: HivemindConfig | None,
+) -> list[str]:
+    """Resolve active targets from link metadata or global config."""
+    if isinstance(link, dict):
+        raw = link.get("targets")
+        if isinstance(raw, list):
+            values = normalize_targets(raw)
+            if values:
+                return values
+    if cfg is not None:
+        return cfg.enabled_targets
+    return ["claude"]
+
+
 def _check_verify_md(
     project_dir: Path,
     link: dict[str, Any] | None,
@@ -218,6 +267,57 @@ def _check_verify_md(
         f"neither verify.md nor build-verify.md in {project_spec_dir}"
         " — run /hv:create-verify to generate one",
     )
+
+
+def _check_instruction_files(
+    project_dir: Path,
+    targets: list[str],
+) -> list[CheckResult]:
+    """Check managed instruction files for active runtimes."""
+    results: list[CheckResult] = []
+
+    agents_md = project_dir / "AGENTS.md"
+    if agents_md.exists():
+        results.append(_ok("AGENTS.md", str(agents_md)))
+    else:
+        results.append(
+            _warn(
+                "AGENTS.md",
+                f"missing in {project_dir} — run `hv link --target {'both' if 'claude' in targets and 'codex' in targets else targets[0]}`",
+            )
+        )
+
+    if "claude" in targets:
+        claude_md = project_dir / "CLAUDE.md"
+        if not claude_md.exists():
+            results.append(
+                _warn("CLAUDE.md", f"missing in {project_dir} for Claude target")
+            )
+        else:
+            try:
+                text = claude_md.read_text(encoding="utf-8")
+            except OSError:
+                text = ""
+            if "@AGENTS.md" not in text:
+                results.append(
+                    _warn("CLAUDE.md", "exists but missing @AGENTS.md shim import")
+                )
+            else:
+                results.append(_ok("CLAUDE.md", str(claude_md)))
+
+    if "codex" in targets:
+        hooks_json = project_dir / ".codex" / "hooks.json"
+        if hooks_json.exists():
+            results.append(_ok("Codex hooks", str(hooks_json)))
+        else:
+            results.append(
+                _warn(
+                    "Codex hooks",
+                    f"missing {hooks_json} — run `hv link --target codex`",
+                )
+            )
+
+    return results
 
 
 _OBSIDIAN_RE = re.compile(r"^\s*obsidian-import\b")
@@ -285,12 +385,18 @@ def run_checks(project_dir: Path) -> list[CheckResult]:
     results.append(cfg_result)
 
     results.append(_check_data_directory(cfg))
-    results.append(_check_plugin_installed())
 
     link_result, link = _check_project_link(project_dir)
     results.append(link_result)
+    targets = _determine_targets(link, cfg)
+
+    if "claude" in targets:
+        results.append(_check_claude_plugin_installed())
+    if "codex" in targets:
+        results.append(_check_codex_plugin_installed())
 
     results.append(_check_verify_md(project_dir, link, cfg))
+    results.extend(_check_instruction_files(project_dir, targets))
     results.append(_check_legacy_artifacts(project_dir))
 
     return results
