@@ -27,10 +27,13 @@ def install_profiles(config_path: Path) -> bool:
         existed.
     """
     cfg = HivemindConfig.load(config_path)
+    changed = cfg.ensure_runtime_models()
 
     existing_profiles = cfg.get("profiles")
     if isinstance(existing_profiles, dict) and existing_profiles:
-        return False
+        if changed:
+            cfg.save()
+        return changed
 
     defaults = default_config()
     cfg.set("profiles", defaults["profiles"])

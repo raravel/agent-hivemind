@@ -332,3 +332,14 @@ class TestInstallProfiles:
         loaded = HivemindConfig.load(config_path)
         assert loaded.get("model_profile") == "quality"
         assert loaded.get("version") == "3.0.0"
+
+    def test_seeds_runtime_models_when_profiles_already_exist(self, tmp_path: Path) -> None:
+        data = default_config()
+        data.pop("runtime_models", None)
+        config_path = self._make_config(tmp_path, data=data)
+
+        result = install_profiles(config_path)
+
+        assert result is True
+        loaded = HivemindConfig.load(config_path)
+        assert loaded.get("runtime_models.codex.profiles.balanced.executor") == "gpt-5.1-codex"

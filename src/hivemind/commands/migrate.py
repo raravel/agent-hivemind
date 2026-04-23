@@ -14,6 +14,8 @@ import click
 
 from hivemind.core.config import (
     DEFAULT_PRICING,
+    CODEX_DEFAULT_PRICING,
+    CODEX_DEFAULT_PROFILES,
     data_path_for_storage,
     default_config,
     normalize_data_path,
@@ -363,6 +365,21 @@ def _update_config_v3(config_path: Path) -> list[str]:
         if not isinstance(enabled, list) or not enabled:
             runtime["enabled_targets"] = ["claude"]
             changes.append("runtime.enabled_targets = ['claude']")
+    runtime_models = data.get("runtime_models")
+    if not isinstance(runtime_models, dict):
+        data["runtime_models"] = defaults["runtime_models"]
+        changes.append("runtime_models seeded")
+    else:
+        if not isinstance(runtime_models.get("claude"), dict):
+            runtime_models["claude"] = defaults["runtime_models"]["claude"]
+            changes.append("runtime_models.claude seeded")
+        if not isinstance(runtime_models.get("codex"), dict):
+            runtime_models["codex"] = {
+                "model_profile": "balanced",
+                "profiles": CODEX_DEFAULT_PROFILES,
+                "pricing": CODEX_DEFAULT_PRICING,
+            }
+            changes.append("runtime_models.codex seeded")
 
     raw_path = data.get("data_path")
     if isinstance(raw_path, str):

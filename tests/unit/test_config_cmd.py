@@ -102,6 +102,18 @@ class TestConfigGet:
         assert result.exit_code == 0
         assert result.output.strip() == "False"
 
+    def test_get_profiles_uses_codex_runtime_when_selected(
+        self, runner: CliRunner, config_path: Path
+    ) -> None:
+        cfg = HivemindConfig.load(config_path)
+        cfg.set_runtime_targets(default_target="codex", enabled_targets=["codex"])
+        cfg.save()
+
+        with _patch_resolve(config_path):
+            result = runner.invoke(config_cmd, ["profiles.balanced.executor"])
+        assert result.exit_code == 0
+        assert result.output.strip() == "gpt-5.1-codex"
+
 
 class TestConfigSet:
     """hv config <key> <value> sets and persists value."""
@@ -139,6 +151,21 @@ class TestConfigSet:
 
         cfg = HivemindConfig.load(config_path)
         assert cfg.get("profiles.balanced.executor") == "opus"
+
+    def test_set_runtime_model_profile_for_codex(
+        self, runner: CliRunner, config_path: Path
+    ) -> None:
+        cfg = HivemindConfig.load(config_path)
+        cfg.set_runtime_targets(default_target="codex", enabled_targets=["codex"])
+        cfg.save()
+
+        with _patch_resolve(config_path):
+            result = runner.invoke(config_cmd, ["model_profile", "quality"])
+        assert result.exit_code == 0
+
+        reloaded = HivemindConfig.load(config_path)
+        assert reloaded.runtime_model_profile() == "quality"
+        assert reloaded.get("model_profile") == "balanced"
 
     def test_set_numeric_value(
         self, runner: CliRunner, config_path: Path

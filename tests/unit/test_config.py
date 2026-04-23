@@ -41,6 +41,7 @@ class TestDefaultConfig:
             "projects",
             "filter_patterns",
             "runtime",
+            "runtime_models",
         }
         assert set(cfg.keys()) == expected_keys
 
@@ -95,6 +96,12 @@ class TestDefaultConfig:
         cfg = default_config()
         assert cfg["runtime"]["default_target"] == "claude"
         assert cfg["runtime"]["enabled_targets"] == ["claude"]
+
+    def test_runtime_models_include_codex(self) -> None:
+        cfg = default_config()
+        codex_profiles = cfg["runtime_models"]["codex"]["profiles"]
+        assert codex_profiles["balanced"]["executor"] == "gpt-5.1-codex"
+        assert cfg["runtime_models"]["codex"]["pricing"]["codex-mini-latest"]["output"] == 6.0
 
 
 class TestTargetExpansion:
@@ -252,6 +259,17 @@ class TestProjectManagement:
         loaded = HivemindConfig.load(config_path)
         assert loaded.default_target == "codex"
         assert loaded.enabled_targets == ["claude", "codex"]
+
+    def test_runtime_profile_helpers(self, tmp_path: Path) -> None:
+        config_path = tmp_path / ".hivemind.json"
+        cfg = HivemindConfig(config_path, default_config())
+        cfg.set_runtime_targets(default_target="codex", enabled_targets=["codex"])
+        cfg.save()
+
+        loaded = HivemindConfig.load(config_path)
+        assert loaded.runtime_model_profile() == "balanced"
+        assert loaded.runtime_profile()["executor"] == "gpt-5.1-codex"
+        assert loaded.runtime_pricing()["gpt-5.2-codex"]["input"] == 1.75
 
 
 class TestDataPath:
