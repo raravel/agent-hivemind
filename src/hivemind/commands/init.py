@@ -154,16 +154,19 @@ def _print_runtime_section(
 
 def _print_installer_summary(summary: dict[str, object]) -> None:
     """Print a human-readable summary of what the installers did."""
-    click.echo("")
-    _print_runtime_section(
-        "Claude Code",
-        summary.get("claude") if isinstance(summary.get("claude"), dict) else None,
+    claude_summary = summary.get("claude")
+    codex_summary = summary.get("codex")
+    claude_runtime: dict[str, object] | None = (
+        claude_summary if isinstance(claude_summary, dict) else None
     )
-    click.echo("")
-    _print_runtime_section(
-        "Codex",
-        summary.get("codex") if isinstance(summary.get("codex"), dict) else None,
+    codex_runtime: dict[str, object] | None = (
+        codex_summary if isinstance(codex_summary, dict) else None
     )
+
+    click.echo("")
+    _print_runtime_section("Claude Code", claude_runtime)
+    click.echo("")
+    _print_runtime_section("Codex", codex_runtime)
 
     # Profiles
     if summary.get("profiles"):

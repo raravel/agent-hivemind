@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import frontmatter
-import pytest
 
 from hivemind.commands.important import (
     _scan_promoted,

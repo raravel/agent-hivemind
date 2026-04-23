@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from hivemind.core.config import (
+    CLAUDE_DEFAULT_PRICING,
+    DEFAULT_PRICING,
     HivemindConfig,
     data_path_for_storage,
     default_config,
@@ -102,6 +104,10 @@ class TestDefaultConfig:
         codex_profiles = cfg["runtime_models"]["codex"]["profiles"]
         assert codex_profiles["balanced"]["executor"] == "gpt-5.1-codex"
         assert cfg["runtime_models"]["codex"]["pricing"]["codex-mini-latest"]["output"] == 6.0
+
+    def test_default_pricing_alias_is_not_shared_reference(self) -> None:
+        assert DEFAULT_PRICING == CLAUDE_DEFAULT_PRICING
+        assert DEFAULT_PRICING is not CLAUDE_DEFAULT_PRICING
 
 
 class TestTargetExpansion:

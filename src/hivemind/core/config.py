@@ -23,7 +23,8 @@ CODEX_DEFAULT_PRICING: dict[str, dict[str, float]] = {
     "gpt-5.1-codex": {"input": 1.25, "output": 10.0},
     "codex-mini-latest": {"input": 1.5, "output": 6.0},
 }
-DEFAULT_PRICING = CLAUDE_DEFAULT_PRICING
+# Backward-compatible alias for older imports.
+DEFAULT_PRICING = copy.deepcopy(CLAUDE_DEFAULT_PRICING)
 
 CLAUDE_DEFAULT_PROFILES: dict[str, dict[str, str]] = {
     "quality": {

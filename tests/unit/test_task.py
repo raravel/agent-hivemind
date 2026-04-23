@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-import pytest
 from click.testing import CliRunner
 
 from hivemind.commands.task import (

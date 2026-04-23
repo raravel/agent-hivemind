@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import shutil
@@ -13,14 +14,16 @@ from typing import Any
 import click
 
 from hivemind.core.config import (
-    DEFAULT_PRICING,
-    CODEX_DEFAULT_PRICING,
-    CODEX_DEFAULT_PROFILES,
+    SUPPORTED_TARGETS,
     data_path_for_storage,
     default_config,
     normalize_data_path,
 )
-from hivemind.core.instructions import write_codex_hooks_file, write_instruction_files
+from hivemind.core.instructions import (
+    normalize_targets,
+    write_codex_hooks_file,
+    write_instruction_files,
+)
 
 
 def detect_v1(data_path: Path) -> bool:
@@ -208,13 +211,9 @@ def _fix_link_json(project_dir: Path, data_path: Path) -> bool:
     raw_targets = link.get("targets")
     desired_targets = ["claude"]
     if isinstance(raw_targets, list):
-        values = [
-            item
-            for item in raw_targets
-            if isinstance(item, str) and item in {"claude", "codex"}
-        ]
+        values = normalize_targets(raw_targets)
         if values:
-            desired_targets = sorted(dict.fromkeys(values))
+            desired_targets = values
     if link.get("targets") != desired_targets:
         link["targets"] = desired_targets
         changed = True
@@ -348,17 +347,17 @@ def _update_config_v3(config_path: Path) -> list[str]:
                 changes.append(f"profiles.{pname}.{role} -> {model_id}")
 
     if "pricing" not in data or not isinstance(data["pricing"], dict):
-        data["pricing"] = DEFAULT_PRICING
+        data["pricing"] = copy.deepcopy(defaults["pricing"])
         changes.append("pricing seeded")
     if "parallel" not in data or not isinstance(data["parallel"], dict):
         data["parallel"] = {"max_concurrency": 2}
         changes.append("parallel.max_concurrency = 2")
     runtime = data.get("runtime")
     if not isinstance(runtime, dict):
-        data["runtime"] = defaults["runtime"]
+        data["runtime"] = copy.deepcopy(defaults["runtime"])
         changes.append("runtime seeded")
     else:
-        if runtime.get("default_target") not in {"claude", "codex"}:
+        if runtime.get("default_target") not in SUPPORTED_TARGETS:
             runtime["default_target"] = "claude"
             changes.append("runtime.default_target = claude")
         enabled = runtime.get("enabled_targets")
@@ -367,18 +366,18 @@ def _update_config_v3(config_path: Path) -> list[str]:
             changes.append("runtime.enabled_targets = ['claude']")
     runtime_models = data.get("runtime_models")
     if not isinstance(runtime_models, dict):
-        data["runtime_models"] = defaults["runtime_models"]
+        data["runtime_models"] = copy.deepcopy(defaults["runtime_models"])
         changes.append("runtime_models seeded")
     else:
         if not isinstance(runtime_models.get("claude"), dict):
-            runtime_models["claude"] = defaults["runtime_models"]["claude"]
+            runtime_models["claude"] = copy.deepcopy(
+                defaults["runtime_models"]["claude"]
+            )
             changes.append("runtime_models.claude seeded")
         if not isinstance(runtime_models.get("codex"), dict):
-            runtime_models["codex"] = {
-                "model_profile": "balanced",
-                "profiles": CODEX_DEFAULT_PROFILES,
-                "pricing": CODEX_DEFAULT_PRICING,
-            }
+            runtime_models["codex"] = copy.deepcopy(
+                defaults["runtime_models"]["codex"]
+            )
             changes.append("runtime_models.codex seeded")
 
     raw_path = data.get("data_path")
@@ -514,13 +513,9 @@ def migrate_v2_to_v3(
                     project = link.get("project")
                     raw_targets = link.get("targets")
                     if isinstance(raw_targets, list):
-                        values = [
-                            item
-                            for item in raw_targets
-                            if isinstance(item, str) and item in {"claude", "codex"}
-                        ]
+                        values = normalize_targets(raw_targets)
                         if values:
-                            targets = sorted(dict.fromkeys(values))
+                            targets = values
                 except (OSError, json.JSONDecodeError):
                     project = None
             if project and _ensure_claude_md_imports(
