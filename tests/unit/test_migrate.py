@@ -328,6 +328,12 @@ class TestMigrateV3Config:
         cfg = json.loads((data / ".hivemind.json").read_text(encoding="utf-8"))
         assert cfg["parallel"]["max_concurrency"] == 2
 
+    def test_runtime_models_seeded(self, tmp_path: Path) -> None:
+        data = _make_v2_data(tmp_path)
+        migrate_v2_to_v3(data, backup=False, claude_settings=tmp_path / "none.json")
+        cfg = json.loads((data / ".hivemind.json").read_text(encoding="utf-8"))
+        assert cfg["runtime_models"]["codex"]["profiles"]["balanced"]["executor"] == "gpt-5.1-codex"
+
     def test_idempotent(self, tmp_path: Path) -> None:
         data = _make_v2_data(tmp_path)
         migrate_v2_to_v3(data, backup=False, claude_settings=tmp_path / "none.json")

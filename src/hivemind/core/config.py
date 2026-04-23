@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from pathlib import Path
@@ -12,11 +13,68 @@ SUPPORTED_TARGETS = ("claude", "codex")
 
 # Per-Mtoken USD pricing, seeded from public Anthropic pricing. Users may
 # override in .hivemind.json; values are cents-level estimates.
-DEFAULT_PRICING: dict[str, dict[str, float]] = {
+CLAUDE_DEFAULT_PRICING: dict[str, dict[str, float]] = {
     "claude-opus-4-7": {"input": 15.0, "output": 75.0},
     "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
     "claude-haiku-4-5": {"input": 0.8, "output": 4.0},
 }
+CODEX_DEFAULT_PRICING: dict[str, dict[str, float]] = {
+    "gpt-5.2-codex": {"input": 1.75, "output": 14.0},
+    "gpt-5.1-codex": {"input": 1.25, "output": 10.0},
+    "codex-mini-latest": {"input": 1.5, "output": 6.0},
+}
+DEFAULT_PRICING = CLAUDE_DEFAULT_PRICING
+
+CLAUDE_DEFAULT_PROFILES: dict[str, dict[str, str]] = {
+    "quality": {
+        "planner": "claude-opus-4-7",
+        "executor": "claude-opus-4-7",
+        "reviewer": "claude-opus-4-7",
+    },
+    "balanced": {
+        "planner": "claude-opus-4-7",
+        "executor": "claude-sonnet-4-6",
+        "reviewer": "claude-sonnet-4-6",
+    },
+    "budget": {
+        "planner": "claude-sonnet-4-6",
+        "executor": "claude-haiku-4-5",
+        "reviewer": "claude-haiku-4-5",
+    },
+}
+CODEX_DEFAULT_PROFILES: dict[str, dict[str, str]] = {
+    "quality": {
+        "planner": "gpt-5.2-codex",
+        "executor": "gpt-5.2-codex",
+        "reviewer": "gpt-5.2-codex",
+    },
+    "balanced": {
+        "planner": "gpt-5.2-codex",
+        "executor": "gpt-5.1-codex",
+        "reviewer": "gpt-5.1-codex",
+    },
+    "budget": {
+        "planner": "gpt-5.1-codex",
+        "executor": "codex-mini-latest",
+        "reviewer": "codex-mini-latest",
+    },
+}
+
+
+def default_runtime_models() -> dict[str, dict[str, Any]]:
+    """Return runtime-scoped profile/pricing defaults."""
+    return {
+        "claude": {
+            "model_profile": "balanced",
+            "profiles": copy.deepcopy(CLAUDE_DEFAULT_PROFILES),
+            "pricing": copy.deepcopy(CLAUDE_DEFAULT_PRICING),
+        },
+        "codex": {
+            "model_profile": "balanced",
+            "profiles": copy.deepcopy(CODEX_DEFAULT_PROFILES),
+            "pricing": copy.deepcopy(CODEX_DEFAULT_PRICING),
+        },
+    }
 
 
 def expand_target_selection(target: str) -> list[str]:
@@ -36,24 +94,8 @@ def default_config() -> dict[str, Any]:
         "git_enabled": False,
         "auto_commit": False,
         "model_profile": "balanced",
-        "profiles": {
-            "quality": {
-                "planner": "claude-opus-4-7",
-                "executor": "claude-opus-4-7",
-                "reviewer": "claude-opus-4-7",
-            },
-            "balanced": {
-                "planner": "claude-opus-4-7",
-                "executor": "claude-sonnet-4-6",
-                "reviewer": "claude-sonnet-4-6",
-            },
-            "budget": {
-                "planner": "claude-sonnet-4-6",
-                "executor": "claude-haiku-4-5",
-                "reviewer": "claude-haiku-4-5",
-            },
-        },
-        "pricing": DEFAULT_PRICING,
+        "profiles": copy.deepcopy(CLAUDE_DEFAULT_PROFILES),
+        "pricing": copy.deepcopy(CLAUDE_DEFAULT_PRICING),
         "parallel": {"max_concurrency": 2},
         "projects": {},
         "filter_patterns": [],
@@ -61,6 +103,7 @@ def default_config() -> dict[str, Any]:
             "default_target": "claude",
             "enabled_targets": ["claude"],
         },
+        "runtime_models": default_runtime_models(),
     }
 
 
@@ -177,6 +220,28 @@ class HivemindConfig:
         runtime["default_target"] = default_target
         runtime["enabled_targets"] = enabled_targets
 
+    def ensure_runtime_models(self) -> bool:
+        """Ensure runtime-scoped profiles/pricing catalogs exist."""
+        changed = False
+        defaults = default_runtime_models()
+        runtime_models = self._data.get("runtime_models")
+        if not isinstance(runtime_models, dict):
+            runtime_models = {}
+            self._data["runtime_models"] = runtime_models
+            changed = True
+
+        for target, target_defaults in defaults.items():
+            existing = runtime_models.get(target)
+            if not isinstance(existing, dict):
+                runtime_models[target] = target_defaults
+                changed = True
+                continue
+            for key, value in target_defaults.items():
+                if key not in existing or not isinstance(existing[key], type(value)):
+                    existing[key] = value
+                    changed = True
+        return changed
+
     @property
     def data_path(self) -> Path:
         """Return resolved data path, cross-platform safe."""
@@ -208,6 +273,86 @@ class HivemindConfig:
                 if values:
                     return values
         return [self.default_target]
+
+    def runtime_model_profile(self, target: str | None = None) -> str:
+        """Return the selected profile for a target runtime."""
+        selected = target or self.default_target
+        runtime_models = self._data.get("runtime_models")
+        if isinstance(runtime_models, dict):
+            raw = runtime_models.get(selected)
+            if isinstance(raw, dict):
+                value = raw.get("model_profile")
+                if isinstance(value, str):
+                    return value
+        value = self._data.get("model_profile")
+        return value if isinstance(value, str) else "balanced"
+
+    def runtime_profiles(self, target: str | None = None) -> dict[str, Any]:
+        """Return role profiles for a target runtime."""
+        selected = target or self.default_target
+        runtime_models = self._data.get("runtime_models")
+        if isinstance(runtime_models, dict):
+            raw = runtime_models.get(selected)
+            if isinstance(raw, dict):
+                profiles = raw.get("profiles")
+                if isinstance(profiles, dict) and profiles:
+                    return profiles
+        profiles = self._data.get("profiles")
+        return profiles if isinstance(profiles, dict) else {}
+
+    def runtime_pricing(self, target: str | None = None) -> dict[str, Any]:
+        """Return pricing map for a target runtime."""
+        selected = target or self.default_target
+        runtime_models = self._data.get("runtime_models")
+        if isinstance(runtime_models, dict):
+            raw = runtime_models.get(selected)
+            if isinstance(raw, dict):
+                pricing = raw.get("pricing")
+                if isinstance(pricing, dict) and pricing:
+                    return pricing
+        pricing = self._data.get("pricing")
+        return pricing if isinstance(pricing, dict) else {}
+
+    def set_runtime_model_profile(
+        self, profile_name: str, target: str | None = None
+    ) -> None:
+        """Set the selected profile for a target runtime."""
+        selected = target or self.default_target
+        self.ensure_runtime_models()
+        self.set(f"runtime_models.{selected}.model_profile", profile_name)
+        if selected == "claude":
+            self.set("model_profile", profile_name)
+
+    def set_runtime_profiles(
+        self, profiles: dict[str, Any], target: str | None = None
+    ) -> None:
+        """Set the profile map for a target runtime."""
+        selected = target or self.default_target
+        self.ensure_runtime_models()
+        self.set(f"runtime_models.{selected}.profiles", profiles)
+        if selected == "claude":
+            self.set("profiles", profiles)
+
+    def set_runtime_pricing(
+        self, pricing: dict[str, Any], target: str | None = None
+    ) -> None:
+        """Set the pricing map for a target runtime."""
+        selected = target or self.default_target
+        self.ensure_runtime_models()
+        self.set(f"runtime_models.{selected}.pricing", pricing)
+        if selected == "claude":
+            self.set("pricing", pricing)
+
+    def runtime_profile(
+        self,
+        profile_name: str | None = None,
+        *,
+        target: str | None = None,
+    ) -> dict[str, Any]:
+        """Return one named profile for the selected runtime."""
+        resolved_profile = profile_name or self.runtime_model_profile(target)
+        profile = self.runtime_profiles(target).get(resolved_profile)
+        return profile if isinstance(profile, dict) else {}
 
     @property
     def raw(self) -> dict[str, Any]:

@@ -112,9 +112,8 @@ def record(project: str, from_stdin: bool, model: str | None) -> None:
 
     resolved_model = model
     if not resolved_model:
-        profile_name = str(cfg.get("model_profile") or "balanced")
-        profile = cfg.get(f"profiles.{profile_name}") or {}
-        if isinstance(profile, dict):
+        profile = cfg.runtime_profile()
+        if profile:
             resolved_model = str(profile.get("reviewer") or "unknown")
         else:
             resolved_model = "unknown"
