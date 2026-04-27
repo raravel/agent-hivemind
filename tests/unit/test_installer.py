@@ -276,7 +276,7 @@ class TestInstallCodexPlugin:
 
     def test_upserts_personal_marketplace(self, tmp_path: Path) -> None:
         source = _make_codex_plugin_source(tmp_path, skills=["hv-plan"])
-        target = tmp_path / ".codex" / "plugins" / "hv"
+        target = tmp_path / "plugins" / "hv"
         marketplace = tmp_path / ".agents" / "plugins" / "marketplace.json"
 
         install_codex_plugin(source, target, marketplace)
@@ -284,9 +284,66 @@ class TestInstallCodexPlugin:
         data = json.loads(marketplace.read_text(encoding="utf-8"))
         assert data["name"] == "agent-hivemind-local"
         assert any(
-            plugin["name"] == "hv" and plugin["source"]["path"] == "./.codex/plugins/hv"
+            plugin["name"] == "hv" and plugin["source"]["path"] == "./plugins/hv"
             for plugin in data["plugins"]
         )
+
+    def test_updates_current_and_legacy_marketplaces(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        source = _make_codex_plugin_source(tmp_path, skills=["hv-plan"])
+        primary_plugin_dir = tmp_path / "plugins" / "hv"
+        legacy_plugin_dir = tmp_path / ".codex" / "plugins" / "hv"
+        primary_marketplace = tmp_path / ".agents" / "plugins" / "marketplace.json"
+        legacy_marketplace = tmp_path / ".codex" / "plugins" / "marketplace.json"
+        monkeypatch.setattr(
+            "hivemind.installer.codex_plugin._PRIMARY_CODEX_PLUGIN_DIR",
+            primary_plugin_dir,
+        )
+        monkeypatch.setattr(
+            "hivemind.installer.codex_plugin._LEGACY_CODEX_PLUGIN_DIR",
+            legacy_plugin_dir,
+        )
+        monkeypatch.setattr(
+            "hivemind.installer.codex_plugin._PRIMARY_CODEX_MARKETPLACE_PATH",
+            primary_marketplace,
+        )
+        monkeypatch.setattr(
+            "hivemind.installer.codex_plugin._LEGACY_CODEX_MARKETPLACE_PATH",
+            legacy_marketplace,
+        )
+
+        install_codex_plugin(source)
+
+        assert primary_plugin_dir.exists()
+        assert legacy_plugin_dir.exists()
+        assert primary_marketplace.exists()
+        assert legacy_marketplace.exists()
+        primary_data = json.loads(primary_marketplace.read_text(encoding="utf-8"))
+        legacy_data = json.loads(legacy_marketplace.read_text(encoding="utf-8"))
+        assert primary_data["plugins"][0]["source"]["path"] == "./plugins/hv"
+        assert legacy_data["plugins"][0]["source"]["path"] == "./.codex/plugins/hv"
+
+    def test_installs_skills_into_codex_skills_dir(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        source = _make_codex_plugin_source(tmp_path, skills=["hv-plan", "hv-task"])
+        target = tmp_path / "plugins" / "hv"
+        marketplace = tmp_path / ".agents" / "plugins" / "marketplace.json"
+        skills_root = tmp_path / ".codex" / "skills"
+        monkeypatch.setattr(
+            "hivemind.installer.codex_plugin._CODEX_SKILLS_DIR",
+            skills_root,
+        )
+
+        install_codex_plugin(source, target, marketplace)
+
+        assert (skills_root / "hv-plan" / "SKILL.md").exists()
+        assert (skills_root / "hv-task" / "SKILL.md").exists()
 
 
 # ---------------------------------------------------------------------------

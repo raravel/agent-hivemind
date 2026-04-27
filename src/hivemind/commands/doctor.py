@@ -16,6 +16,15 @@ from hivemind.core.config import HivemindConfig, normalize_data_path
 from hivemind.core.instructions import normalize_targets
 from hivemind.installer.plugin_bundle import resolve_manifest_skills_dir
 
+_PRIMARY_CODEX_PLUGIN_DIR = Path("~/plugins/hv").expanduser()
+_LEGACY_CODEX_PLUGIN_DIR = Path("~/.codex/plugins/hv").expanduser()
+_PRIMARY_CODEX_MARKETPLACE_PATH = Path(
+    "~/.agents/plugins/marketplace.json"
+).expanduser()
+_LEGACY_CODEX_MARKETPLACE_PATH = Path(
+    "~/.codex/plugins/marketplace.json"
+).expanduser()
+
 Severity = str  # "ok" | "warn" | "error"
 
 
@@ -143,11 +152,19 @@ def _check_claude_plugin_installed() -> CheckResult:
 
 
 def _check_codex_plugin_installed() -> CheckResult:
-    plugin_dir = Path("~/.codex/plugins/hv").expanduser()
-    if not plugin_dir.exists():
+    plugin_dir = None
+    for candidate in (_PRIMARY_CODEX_PLUGIN_DIR, _LEGACY_CODEX_PLUGIN_DIR):
+        if candidate.exists():
+            plugin_dir = candidate
+            break
+    if plugin_dir is None:
         return _err(
             "Codex plugin",
-            f"not installed at {plugin_dir} — run `hv init --target codex`",
+            (
+                "not installed at "
+                f"{_PRIMARY_CODEX_PLUGIN_DIR} or {_LEGACY_CODEX_PLUGIN_DIR}"
+                " — run `hv init --target codex`"
+            ),
         )
 
     manifest = plugin_dir / ".codex-plugin" / "plugin.json"
@@ -158,10 +175,14 @@ def _check_codex_plugin_installed() -> CheckResult:
         )
 
     skills = _list_plugin_skills(plugin_dir, ".codex-plugin/plugin.json")
-    marketplace = Path("~/.agents/plugins/marketplace.json").expanduser()
     marketplace_note = "marketplace missing"
-    if marketplace.exists():
-        marketplace_note = str(marketplace)
+    for marketplace in (
+        _PRIMARY_CODEX_MARKETPLACE_PATH,
+        _LEGACY_CODEX_MARKETPLACE_PATH,
+    ):
+        if marketplace.exists():
+            marketplace_note = str(marketplace)
+            break
 
     detail = f"{plugin_dir} ({len(skills)} skills, {marketplace_note})"
     if not skills:
