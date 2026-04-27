@@ -8,9 +8,15 @@ from pathlib import Path
 
 import click
 
-from hivemind.core.config import HivemindConfig, data_path_for_storage, expand_target_selection
+from hivemind.core.config import (
+    SUPPORTED_TARGETS,
+    HivemindConfig,
+    data_path_for_storage,
+    expand_target_selection,
+)
 from hivemind.core.git import auto_commit
 from hivemind.core.instructions import write_codex_hooks_file, write_instruction_files
+
 
 def _detect_name(name: str | None, project_dir: Path) -> str:
     """Detect project name: --name flag > git remote name > directory name."""
@@ -97,7 +103,7 @@ def link_project(
             existing_targets = [
                 item
                 for item in raw_targets
-                if isinstance(item, str) and item in {"claude", "codex"}
+                if isinstance(item, str) and item in SUPPORTED_TARGETS
             ]
         click.echo(f"Refreshing existing link for '{resolved_name}'.")
 

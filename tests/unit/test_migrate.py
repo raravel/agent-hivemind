@@ -13,6 +13,7 @@ from hivemind.commands.migrate import (
     migrate_v2_to_v3,
     print_migration_summary,
 )
+from hivemind.core.config import SUPPORTED_TARGETS
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +414,31 @@ class TestMigrateV3LinkFile:
         assert "C:" not in link["data_path"]
         assert "\\" not in link["data_path"]
         assert link["targets"] == ["claude"]
+
+    def test_invalid_targets_normalized_out(self, tmp_path: Path) -> None:
+        data = _make_v2_data(tmp_path)
+        project_dir = tmp_path / "demo"
+        project_dir.mkdir()
+        (project_dir / ".hivemind-link.json").write_text(
+            json.dumps(
+                {
+                    "project": "demo",
+                    "data_path": str(data),
+                    "targets": ["codex", "invalid", "claude", "codex"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        migrate_v2_to_v3(
+            data,
+            project_dirs=[project_dir],
+            backup=False,
+            claude_settings=tmp_path / "none.json",
+        )
+        link = json.loads(
+            (project_dir / ".hivemind-link.json").read_text(encoding="utf-8")
+        )
+        assert link["targets"] == sorted(SUPPORTED_TARGETS)
 
 
 class TestMigrateV3ClaudeMd:

@@ -5,12 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from hivemind.core.config import expand_target_selection
+from hivemind.core.config import SUPPORTED_TARGETS, expand_target_selection
 
 BLOCK_START = "<!-- hivemind:start -->"
 BLOCK_END = "<!-- hivemind:end -->"
-CODEX_HOOKS_START = "<!-- hivemind-codex-hooks:start -->"
-CODEX_HOOKS_END = "<!-- hivemind-codex-hooks:end -->"
 
 
 def normalize_targets(targets: list[str] | tuple[str, ...] | str) -> list[str]:
@@ -18,7 +16,7 @@ def normalize_targets(targets: list[str] | tuple[str, ...] | str) -> list[str]:
     if isinstance(targets, str):
         return expand_target_selection(targets)
     values = [
-        item for item in targets if isinstance(item, str) and item in {"claude", "codex"}
+        item for item in targets if isinstance(item, str) and item in SUPPORTED_TARGETS
     ]
     return sorted(dict.fromkeys(values))
 
