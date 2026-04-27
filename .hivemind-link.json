@@ -1,4 +1,7 @@
 {
   "project": "agent-hivemind",
-  "data_path": "~/agent-hivemind-data"
+  "data_path": "~/agent-hivemind-data",
+  "targets": [
+    "codex"
+  ]
 }
