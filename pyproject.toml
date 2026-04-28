@@ -28,6 +28,7 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "python-frontmatter>=1.0.0",
     "PyYAML>=6.0",
+    "questionary>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -71,4 +72,8 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "rank_bm25"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "questionary"
 ignore_missing_imports = true

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +52,7 @@ _INDEX_FIELDS: list[str] = [
     "depends_on",
     "title",
     "updated",
+    "completed_at",
 ]
 
 
@@ -166,6 +167,25 @@ def _find_config() -> tuple[HivemindConfig, Path]:
     raise click.ClickException(
         "No .hivemind.json found. Run `hv init` first."
     )
+
+
+def _find_project_by_cwd(cfg: HivemindConfig) -> str | None:
+    cwd = Path.cwd().resolve()
+    projects = cfg.raw.get("projects", {})
+    if not isinstance(projects, dict):
+        return None
+    for name, proj in projects.items():
+        if not isinstance(proj, dict):
+            continue
+        linked = proj.get("linked_path")
+        if linked:
+            try:
+                linked_path = Path(str(linked)).expanduser().resolve()
+                if linked_path == cwd:
+                    return name
+            except Exception:
+                continue
+    return None
 
 
 def _find_task_file(data_path: Path, task_id: str) -> Path:
@@ -332,7 +352,11 @@ def _auto_complete_parents(
     # Auto-complete the parent
     parent_path = _find_task_file(data_path, parent_id)
     today = date.today().isoformat()
-    update_frontmatter(parent_path, {"status": "done", "updated": today})
+    now_iso = datetime.now().isoformat()
+    update_frontmatter(
+        parent_path,
+        {"status": "done", "updated": today, "completed_at": now_iso},
+    )
 
     # Update task index for the auto-completed parent
     project_name = parent_path.parent.name
@@ -594,24 +618,72 @@ def create(
 @click.option(
     "--flat", "flat_mode", is_flag=True, default=False, help="Flat list output."
 )
+@click.option(
+    "--all-projects",
+    "all_projects",
+    is_flag=True,
+    default=False,
+    help="Show tasks from all projects (default: auto-detect current project).",
+)
+@click.option(
+    "--all-tasks",
+    "all_tasks",
+    is_flag=True,
+    default=False,
+    help="Include completed tasks older than 3 days.",
+)
 def list_cmd(
     project: str | None,
     status: str | None,
     priority: str | None,
     flat_mode: bool,
+    all_projects: bool,
+    all_tasks: bool,
 ) -> None:
-    """List tasks."""
     if status is not None:
         validate_status(status)
 
-    _cfg, data_path = _find_config()
-    tasks = _scan_tasks(data_path, project)
+    cfg, data_path = _find_config()
 
-    # Apply filters
+    if all_projects:
+        scan_project = None
+    elif project:
+        scan_project = project
+    else:
+        detected = _find_project_by_cwd(cfg)
+        if detected:
+            scan_project = detected
+        else:
+            raise click.ClickException(
+                "No project linked to current directory. "
+                "Use --project/-p to specify, or --all-projects to show all."
+            )
+
+    tasks = _scan_tasks(data_path, scan_project)
+
     if status is not None:
         tasks = [t for t in tasks if t[0].get("status") == status]
     if priority is not None:
         tasks = [t for t in tasks if t[0].get("priority") == priority]
+
+    if not all_tasks:
+        cutoff = datetime.now() - timedelta(days=3)
+        filtered: list[tuple[dict[str, object], str, Path]] = []
+        for fm, body, path in tasks:
+            if fm.get("status") != "done":
+                filtered.append((fm, body, path))
+                continue
+            completed_at = fm.get("completed_at")
+            if completed_at:
+                try:
+                    completed_dt = datetime.fromisoformat(str(completed_at))
+                    if completed_dt >= cutoff:
+                        filtered.append((fm, body, path))
+                except ValueError:
+                    filtered.append((fm, body, path))
+            else:
+                filtered.append((fm, body, path))
+        tasks = filtered
 
     if not tasks:
         click.echo("No tasks found.")
@@ -762,6 +834,10 @@ def update(
         return
 
     updates["updated"] = date.today().isoformat()
+
+    if status == "done":
+        updates["completed_at"] = datetime.now().isoformat()
+
     update_frontmatter(task_path, updates)
 
     # Update task index — the project name is the parent directory name

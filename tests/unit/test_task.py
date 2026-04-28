@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -178,6 +179,78 @@ class TestList:
         assert "MP-002" in result.output
         assert "MP-001" not in result.output
 
+    def test_auto_detects_project_from_cwd(self, tmp_path: Path) -> None:
+        _config_path, _data_path = _make_workspace(tmp_path)
+        self._create_tasks(tmp_path)
+
+        linked = tmp_path / "myproj_linked"
+        linked.mkdir()
+        cfg = json.loads(_config_path.read_text(encoding="utf-8"))
+        cfg["projects"]["myproj"]["linked_path"] = str(linked)
+        _config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+
+        import shutil
+        shutil.copy2(str(_config_path), str(linked / ".hivemind.json"))
+
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(linked)
+            result = runner.invoke(task, ["list"])
+        finally:
+            os.chdir(old_cwd)
+
+        assert result.exit_code == 0, result.output
+        assert "MP-001" in result.output
+        assert "MP-002" in result.output
+
+    def test_auto_detect_fails_gracefully(self, tmp_path: Path) -> None:
+        _config_path, _data_path = _make_workspace(tmp_path)
+        self._create_tasks(tmp_path)
+
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            result = runner.invoke(task, ["list"])
+        finally:
+            os.chdir(old_cwd)
+
+        assert result.exit_code != 0
+        assert "--all-projects" in result.output
+
+    def test_hides_old_done_tasks_by_default(self, tmp_path: Path) -> None:
+        _config_path, data_path = _make_workspace(tmp_path)
+        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Old done"])
+        _invoke(tmp_path, ["update", "MP-001", "--status", "done"])
+
+        task_file = data_path / "tasks" / "myproj" / "MP-001.md"
+        old_dt = (datetime.now() - timedelta(days=4)).isoformat()
+        from hivemind.core.parser import update_frontmatter
+        update_frontmatter(task_file, {"completed_at": old_dt})
+        _rebuild_task_index(data_path, "myproj")
+
+        result = _invoke(tmp_path, ["list", "-p", "myproj", "--flat"])
+        assert result.exit_code == 0, result.output
+        assert "Old done" not in result.output
+
+    def test_shows_old_done_tasks_with_all_tasks(self, tmp_path: Path) -> None:
+        _config_path, data_path = _make_workspace(tmp_path)
+        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Old done"])
+        _invoke(tmp_path, ["update", "MP-001", "--status", "done"])
+
+        task_file = data_path / "tasks" / "myproj" / "MP-001.md"
+        old_dt = (datetime.now() - timedelta(days=4)).isoformat()
+        from hivemind.core.parser import update_frontmatter
+        update_frontmatter(task_file, {"completed_at": old_dt})
+        _rebuild_task_index(data_path, "myproj")
+
+        result = _invoke(
+            tmp_path, ["list", "-p", "myproj", "--flat", "--all-tasks"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "Old done" in result.output
+
 
 class TestGet:
     """Tests for `hv task get`."""
@@ -235,6 +308,20 @@ class TestUpdate:
         assert fm["title"] == "Updated"
         # updated timestamp should be present
         assert "updated" in fm
+
+    def test_sets_completed_at_when_marked_done(self, tmp_path: Path) -> None:
+        _config_path, data_path = _make_workspace(tmp_path)
+        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Done me"])
+
+        result = _invoke(
+            tmp_path, ["update", "MP-001", "--status", "done"]
+        )
+        assert result.exit_code == 0, result.output
+
+        task_file = data_path / "tasks" / "myproj" / "MP-001.md"
+        fm, _body = parse_task(task_file)
+        assert fm["status"] == "done"
+        assert "completed_at" in fm
 
 
 class TestNext:
@@ -373,6 +460,7 @@ class TestTaskIndex:
             "depends_on": ["X-999"],
             "created": "2025-01-01",
             "updated": "2025-01-02",
+            "completed_at": "2025-01-02T10:00:00",
             "extra_field": "should be ignored",
         }
         entry = _fm_to_index_entry(fm)
@@ -380,6 +468,7 @@ class TestTaskIndex:
         assert entry["status"] == "done"
         assert entry["parent"] == "X-000"
         assert entry["depends_on"] == ["X-999"]
+        assert entry["completed_at"] == "2025-01-02T10:00:00"
         assert "id" not in entry
         assert "created" not in entry
         assert "extra_field" not in entry
@@ -539,3 +628,4 @@ class TestTaskIndex:
         assert entry["depends_on"] == ["MP-000"]
         assert entry["title"] == "Schema test"
         assert "updated" in entry
+        assert "completed_at" in entry

@@ -12,7 +12,9 @@ from pathlib import Path
 from typing import Any
 
 import click
+import questionary
 
+from hivemind.commands.task import _rebuild_task_index
 from hivemind.core.config import (
     SUPPORTED_TARGETS,
     data_path_for_storage,
@@ -24,6 +26,7 @@ from hivemind.core.instructions import (
     write_codex_hooks_file,
     write_instruction_files,
 )
+from hivemind.core.parser import parse_task, update_frontmatter
 
 
 def detect_v1(data_path: Path) -> bool:
@@ -620,13 +623,72 @@ def print_v3_migration_summary(summary: dict[str, Any]) -> None:
         click.echo("  Nothing to do — already on v3.")
 
 
+def _migrate_completed_at(data_path: Path) -> dict[str, Any]:
+    summary: dict[str, Any] = {"tasks_migrated": 0, "projects_scanned": 0}
+    tasks_root = data_path / "tasks"
+    if not tasks_root.exists():
+        return summary
+
+    for project_dir in tasks_root.iterdir():
+        if not project_dir.is_dir():
+            continue
+        summary["projects_scanned"] += 1
+        for md_file in sorted(project_dir.glob("*.md")):
+            if md_file.name.startswith("_"):
+                continue
+            try:
+                fm, _body = parse_task(md_file)
+                if fm.get("status") == "done" and not fm.get("completed_at"):
+                    updated = str(fm.get("updated", ""))
+                    completed_at = (
+                        f"{updated}T00:00:00"
+                        if updated
+                        else datetime.now().isoformat()
+                    )
+                    update_frontmatter(md_file, {"completed_at": completed_at})
+                    summary["tasks_migrated"] += 1
+            except Exception:
+                continue
+        _rebuild_task_index(data_path, project_dir.name)
+
+    return summary
+
+
+def print_completed_at_migration_summary(summary: dict[str, Any]) -> None:
+    click.echo("Migration summary (completed_at backfill):")
+    click.echo(f"  Projects scanned: {summary.get('projects_scanned', 0)}")
+    click.echo(f"  Tasks migrated: {summary.get('tasks_migrated', 0)}")
+
+
+def _detect_current_version(data_path: Path) -> str | None:
+    config_path = data_path / ".hivemind.json"
+    if not config_path.exists():
+        return None
+    try:
+        with config_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        version = data.get("version")
+        if version is None:
+            return "v1"
+        if isinstance(version, str):
+            if version.startswith("1."):
+                return "v1"
+            if version == "2.0.0":
+                return "v2"
+            if version == "3.0.0":
+                return "v3"
+        return "v3"
+    except Exception:
+        return None
+
+
 @click.command("migrate")
 @click.option(
     "--to",
     "target",
-    type=click.Choice(["v2", "v3"]),
-    default="v3",
-    help="Target schema version (default: v3).",
+    type=click.Choice(["v2", "v3", "v3.1"]),
+    default=None,
+    help="Target schema version (prompts if omitted).",
 )
 @click.option(
     "--path",
@@ -648,17 +710,32 @@ def print_v3_migration_summary(summary: dict[str, Any]) -> None:
     help="Skip the automatic data directory backup.",
 )
 def migrate_cmd(
-    target: str,
+    target: str | None,
     path: str | None,
     projects: tuple[str, ...],
     no_backup: bool,
 ) -> None:
-    """Migrate hivemind data to a newer schema version."""
     data_path = (
         Path(path).expanduser().resolve()
         if path
         else Path("~/agent-hivemind-data").expanduser().resolve()
     )
+
+    if target is None:
+        current = _detect_current_version(data_path)
+        choices = ["v2", "v3", "v3.1"]
+        if current == "v1":
+            default = "v2"
+        elif current == "v2":
+            default = "v3"
+        else:
+            default = "v3.1"
+
+        target = questionary.select(
+            "Select target version",
+            choices=choices,
+            default=default,
+        ).unsafe_ask()
 
     if target == "v2":
         if not detect_v1(data_path):
@@ -666,6 +743,11 @@ def migrate_cmd(
             return
         summary = migrate_v1_to_v2(data_path)
         print_migration_summary(summary)
+        return
+
+    if target == "v3.1":
+        summary = _migrate_completed_at(data_path)
+        print_completed_at_migration_summary(summary)
         return
 
     # target == "v3"
