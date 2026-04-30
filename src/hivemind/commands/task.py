@@ -630,7 +630,7 @@ def create(
     "all_tasks",
     is_flag=True,
     default=False,
-    help="Include completed tasks older than 3 days.",
+    help="Include completed tasks.",
 )
 def list_cmd(
     project: str | None,
@@ -667,23 +667,11 @@ def list_cmd(
         tasks = [t for t in tasks if t[0].get("priority") == priority]
 
     if not all_tasks:
-        cutoff = datetime.now() - timedelta(days=3)
-        filtered: list[tuple[dict[str, object], str, Path]] = []
-        for fm, body, path in tasks:
-            if fm.get("status") != "done":
-                filtered.append((fm, body, path))
-                continue
-            completed_at = fm.get("completed_at")
-            if completed_at:
-                try:
-                    completed_dt = datetime.fromisoformat(str(completed_at))
-                    if completed_dt >= cutoff:
-                        filtered.append((fm, body, path))
-                except ValueError:
-                    filtered.append((fm, body, path))
-            else:
-                filtered.append((fm, body, path))
-        tasks = filtered
+        tasks = [
+            (fm, body, path)
+            for fm, body, path in tasks
+            if fm.get("status") != "done"
+        ]
 
     if not tasks:
         click.echo("No tasks found.")

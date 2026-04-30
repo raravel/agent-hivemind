@@ -219,37 +219,27 @@ class TestList:
         assert result.exit_code != 0
         assert "--all-projects" in result.output
 
-    def test_hides_old_done_tasks_by_default(self, tmp_path: Path) -> None:
+    def test_hides_done_tasks_by_default(self, tmp_path: Path) -> None:
         _config_path, data_path = _make_workspace(tmp_path)
-        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Old done"])
+        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Done task"])
         _invoke(tmp_path, ["update", "MP-001", "--status", "done"])
-
-        task_file = data_path / "tasks" / "myproj" / "MP-001.md"
-        old_dt = (datetime.now() - timedelta(days=4)).isoformat()
-        from hivemind.core.parser import update_frontmatter
-        update_frontmatter(task_file, {"completed_at": old_dt})
         _rebuild_task_index(data_path, "myproj")
 
         result = _invoke(tmp_path, ["list", "-p", "myproj", "--flat"])
         assert result.exit_code == 0, result.output
-        assert "Old done" not in result.output
+        assert "Done task" not in result.output
 
-    def test_shows_old_done_tasks_with_all_tasks(self, tmp_path: Path) -> None:
+    def test_shows_done_tasks_with_all_tasks(self, tmp_path: Path) -> None:
         _config_path, data_path = _make_workspace(tmp_path)
-        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Old done"])
+        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Done task"])
         _invoke(tmp_path, ["update", "MP-001", "--status", "done"])
-
-        task_file = data_path / "tasks" / "myproj" / "MP-001.md"
-        old_dt = (datetime.now() - timedelta(days=4)).isoformat()
-        from hivemind.core.parser import update_frontmatter
-        update_frontmatter(task_file, {"completed_at": old_dt})
         _rebuild_task_index(data_path, "myproj")
 
         result = _invoke(
             tmp_path, ["list", "-p", "myproj", "--flat", "--all-tasks"]
         )
         assert result.exit_code == 0, result.output
-        assert "Old done" in result.output
+        assert "Done task" in result.output
 
 
 class TestGet:
