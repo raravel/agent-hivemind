@@ -9,7 +9,6 @@ from pathlib import Path
 import click
 
 from hivemind.core.config import (
-    SUPPORTED_TARGETS,
     HivemindConfig,
     data_path_for_storage,
     expand_target_selection,
@@ -90,36 +89,51 @@ def link_project(
     # Detect name early so an existing link can still be refreshed.
     resolved_name = _detect_name(name, project_dir)
 
-    existing_targets: list[str] = []
+    existing_prefix: str | None = None
 
-    # Already linked?
+    # Already linked? Recover project name + prefix from the prior link file.
+    # Old v3-shaped fields (data_path, targets) are ignored — v4 derives
+    # data_path from the global config location and reads targets from
+    # runtime.enabled_targets, not the link file.
     if link_file.exists():
-        existing = json.loads(link_file.read_text(encoding="utf-8"))
-        proj_name = existing.get("project")
-        if isinstance(proj_name, str) and proj_name:
-            resolved_name = proj_name
-        raw_targets = existing.get("targets")
-        if isinstance(raw_targets, list):
-            existing_targets = [
-                item
-                for item in raw_targets
-                if isinstance(item, str) and item in SUPPORTED_TARGETS
-            ]
+        try:
+            existing = json.loads(link_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            existing = {}
+        if isinstance(existing, dict):
+            proj_name = existing.get("project")
+            if isinstance(proj_name, str) and proj_name:
+                resolved_name = proj_name
+            prefix_raw = existing.get("prefix")
+            if isinstance(prefix_raw, str) and prefix_raw:
+                existing_prefix = prefix_raw
         click.echo(f"Refreshing existing link for '{resolved_name}'.")
 
     # Load hivemind config
     cfg, data_path = _find_config()
     requested_targets = expand_target_selection(target)
-    if existing_targets:
-        merged_targets = sorted(set(existing_targets).union(requested_targets))
-    else:
-        merged_targets = requested_targets
 
-    # 1. Create .hivemind-link.json in project root
+    # Determine prefix:
+    #   1) committed link file (v4 source of truth — same on every machine)
+    #   2) legacy global-config entry (v3 → v4 transition)
+    #   3) auto-generate
+    legacy_prefix: str | None = None
+    proj_cfg = cfg.get_project(resolved_name)
+    if isinstance(proj_cfg, dict):
+        raw_prefix = proj_cfg.get("prefix")
+        if isinstance(raw_prefix, str) and raw_prefix:
+            legacy_prefix = raw_prefix
+    if existing_prefix:
+        prefix = existing_prefix
+    elif legacy_prefix:
+        prefix = legacy_prefix
+    else:
+        prefix = _generate_prefix(resolved_name)
+
+    # 1. Create .hivemind-link.json in project root (v4 shape — {project, prefix})
     link_data = {
         "project": resolved_name,
-        "data_path": data_path_for_storage(data_path),
-        "targets": merged_targets,
+        "prefix": prefix,
     }
     link_file.write_text(
         json.dumps(link_data, indent=2, ensure_ascii=False) + "\n",
@@ -138,8 +152,8 @@ def link_project(
         d.mkdir(parents=True, exist_ok=True)
         click.echo(f"Created {d}")
 
-    # 6-7. Register in .hivemind.json
-    prefix = _generate_prefix(resolved_name)
+    # 6-7. Register in .hivemind.json. The prefix mirror in the global config
+    # is transitional; step 4's v3→v4 migration removes it.
     cfg.set_project(resolved_name, prefix, str(project_dir))
     cfg.save()
     click.echo(
@@ -150,11 +164,11 @@ def link_project(
         project_dir,
         project=resolved_name,
         data_path=data_path_for_storage(data_path),
-        targets=merged_targets,
+        targets=requested_targets,
     )
     for file_name in changed:
         click.echo(f"Updated {file_name}.")
-    if "codex" in merged_targets and write_codex_hooks_file(project_dir):
+    if "codex" in requested_targets and write_codex_hooks_file(project_dir):
         click.echo("Updated .codex/hooks.json.")
 
     auto_commit(data_path, f"link: {resolved_name}")

@@ -111,9 +111,11 @@ class TestLinkProject:
         link_file = project_dir / ".hivemind-link.json"
         assert link_file.exists()
         link_data = json.loads(link_file.read_text(encoding="utf-8"))
-        assert link_data["project"] == "testproj"
-        assert link_data["data_path"] == str(data_path)
-        assert link_data["targets"] == ["claude"]
+        assert link_data == {"project": "testproj", "prefix": "TES"}
+        # v4 link files carry only {project, prefix} — data_path is derived
+        # from the config dirname and targets live in runtime.enabled_targets.
+        assert "data_path" not in link_data
+        assert "targets" not in link_data
 
     def test_creates_data_directories(self, tmp_path: Path) -> None:
         project_dir, data_path = self._setup_workspace(tmp_path)
@@ -166,19 +168,13 @@ class TestLinkProject:
             project_dir
         )
 
-    def test_refresh_if_already_linked(self, tmp_path: Path) -> None:
+    def test_refresh_preserves_project_and_prefix(self, tmp_path: Path) -> None:
         project_dir, data_path = self._setup_workspace(tmp_path)
 
-        # Pre-create link file
+        # Pre-create v4-shaped link file with an explicit prefix.
         link_file = project_dir / ".hivemind-link.json"
         link_file.write_text(
-            json.dumps(
-                {
-                    "project": "existing",
-                    "data_path": str(data_path),
-                    "targets": ["claude"],
-                }
-            ),
+            json.dumps({"project": "existing", "prefix": "EXI"}),
             encoding="utf-8",
         )
 
@@ -196,13 +192,52 @@ class TestLinkProject:
         finally:
             os.chdir(old_cwd)
 
+        # Project name from the existing link wins over the explicit --name arg.
         assert result == "existing"
         refreshed = json.loads(link_file.read_text(encoding="utf-8"))
-        assert refreshed["targets"] == ["claude", "codex"]
+        assert refreshed == {"project": "existing", "prefix": "EXI"}
         cfg_data = json.loads(
             (data_path / ".hivemind.json").read_text(encoding="utf-8")
         )
         assert "existing" in cfg_data.get("projects", {})
+        assert cfg_data["projects"]["existing"]["prefix"] == "EXI"
+
+    def test_refresh_drops_legacy_v3_fields(self, tmp_path: Path) -> None:
+        project_dir, data_path = self._setup_workspace(tmp_path)
+
+        # Pre-create a v3-shaped link file (data_path + targets, no prefix).
+        link_file = project_dir / ".hivemind-link.json"
+        link_file.write_text(
+            json.dumps(
+                {
+                    "project": "legacy",
+                    "data_path": str(data_path),
+                    "targets": ["claude"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        config_path = data_path / ".hivemind.json"
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(project_dir)
+            with patch("hivemind.commands.link._find_config") as mock_fc:
+                from hivemind.core.config import HivemindConfig
+
+                cfg = HivemindConfig.load(config_path)
+                mock_fc.return_value = (cfg, data_path)
+
+                link_project(project_dir, target="codex")
+        finally:
+            os.chdir(old_cwd)
+
+        refreshed = json.loads(link_file.read_text(encoding="utf-8"))
+        assert refreshed["project"] == "legacy"
+        # Prefix is auto-generated since the v3 link had none.
+        assert refreshed["prefix"] == "LEG"
+        assert "data_path" not in refreshed
+        assert "targets" not in refreshed
 
     def test_writes_managed_blocks(self, tmp_path: Path) -> None:
         project_dir, data_path = self._setup_workspace(tmp_path)
@@ -317,16 +352,10 @@ class TestLinkCli:
         project_dir = tmp_path / "cli-project2"
         project_dir.mkdir()
 
-        # Pre-create link file
+        # Pre-create v4-shaped link file
         link_file = project_dir / ".hivemind-link.json"
         link_file.write_text(
-            json.dumps(
-                {
-                    "project": "prev",
-                    "data_path": str(data_path),
-                    "targets": ["claude"],
-                }
-            ),
+            json.dumps({"project": "prev", "prefix": "PRE"}),
             encoding="utf-8",
         )
 
