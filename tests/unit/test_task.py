@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -219,37 +218,96 @@ class TestList:
         assert result.exit_code != 0
         assert "--all-projects" in result.output
 
-    def test_hides_old_done_tasks_by_default(self, tmp_path: Path) -> None:
-        _config_path, data_path = _make_workspace(tmp_path)
-        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Old done"])
+    def test_hides_done_tasks_by_default(self, tmp_path: Path) -> None:
+        _make_workspace(tmp_path)
+        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Done task"])
         _invoke(tmp_path, ["update", "MP-001", "--status", "done"])
-
-        task_file = data_path / "tasks" / "myproj" / "MP-001.md"
-        old_dt = (datetime.now() - timedelta(days=4)).isoformat()
-        from hivemind.core.parser import update_frontmatter
-        update_frontmatter(task_file, {"completed_at": old_dt})
-        _rebuild_task_index(data_path, "myproj")
 
         result = _invoke(tmp_path, ["list", "-p", "myproj", "--flat"])
         assert result.exit_code == 0, result.output
-        assert "Old done" not in result.output
+        assert "Done task" not in result.output
 
-    def test_shows_old_done_tasks_with_all_tasks(self, tmp_path: Path) -> None:
-        _config_path, data_path = _make_workspace(tmp_path)
-        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Old done"])
+    def test_hides_cancelled_tasks_by_default(self, tmp_path: Path) -> None:
+        _make_workspace(tmp_path)
+        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Cancelled task"])
+        _invoke(tmp_path, ["update", "MP-001", "--status", "cancelled"])
+
+        result = _invoke(tmp_path, ["list", "-p", "myproj", "--flat"])
+        assert result.exit_code == 0, result.output
+        assert "Cancelled task" not in result.output
+
+    def test_shows_done_and_cancelled_tasks_with_all_tasks(
+        self, tmp_path: Path
+    ) -> None:
+        _make_workspace(tmp_path)
+        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Done task"])
         _invoke(tmp_path, ["update", "MP-001", "--status", "done"])
-
-        task_file = data_path / "tasks" / "myproj" / "MP-001.md"
-        old_dt = (datetime.now() - timedelta(days=4)).isoformat()
-        from hivemind.core.parser import update_frontmatter
-        update_frontmatter(task_file, {"completed_at": old_dt})
-        _rebuild_task_index(data_path, "myproj")
+        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Cancelled task"])
+        _invoke(tmp_path, ["update", "MP-002", "--status", "cancelled"])
 
         result = _invoke(
             tmp_path, ["list", "-p", "myproj", "--flat", "--all-tasks"]
         )
         assert result.exit_code == 0, result.output
-        assert "Old done" in result.output
+        assert "Done task" in result.output
+        assert "Cancelled task" in result.output
+
+    def test_hides_epic_when_all_descendants_terminal(
+        self, tmp_path: Path
+    ) -> None:
+        """Epic auto-completes (and hides) when its tasks are done/cancelled."""
+        _make_workspace(tmp_path)
+        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Epic", "--type", "epic"])
+        _invoke(
+            tmp_path,
+            ["create", "-p", "myproj", "-t", "Story", "--type", "story", "--parent", "MP-001"],
+        )
+        _invoke(
+            tmp_path,
+            ["create", "-p", "myproj", "-t", "Task A", "--parent", "MP-002"],
+        )
+        _invoke(
+            tmp_path,
+            ["create", "-p", "myproj", "-t", "Task B", "--parent", "MP-002"],
+        )
+
+        # Mix of done and cancelled — story and epic should both auto-complete.
+        _invoke(tmp_path, ["update", "MP-003", "--status", "done"])
+        _invoke(tmp_path, ["update", "MP-004", "--status", "cancelled"])
+
+        result = _invoke(tmp_path, ["list", "-p", "myproj", "--flat"])
+        assert result.exit_code == 0, result.output
+        assert "Epic" not in result.output
+        assert "Story" not in result.output
+        assert "Task A" not in result.output
+        assert "Task B" not in result.output
+
+        # With --all-tasks the epic and story reappear.
+        result_all = _invoke(
+            tmp_path, ["list", "-p", "myproj", "--flat", "--all-tasks"]
+        )
+        assert result_all.exit_code == 0, result_all.output
+        assert "Epic" in result_all.output
+        assert "Story" in result_all.output
+
+    def test_epic_auto_cancelled_when_all_children_cancelled(
+        self, tmp_path: Path
+    ) -> None:
+        _make_workspace(tmp_path)
+        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Epic", "--type", "epic"])
+        _invoke(
+            tmp_path,
+            ["create", "-p", "myproj", "-t", "Story", "--type", "story", "--parent", "MP-001"],
+        )
+        _invoke(
+            tmp_path,
+            ["create", "-p", "myproj", "-t", "Task A", "--parent", "MP-002"],
+        )
+        _invoke(tmp_path, ["update", "MP-003", "--status", "cancelled"])
+
+        result = _invoke(tmp_path, ["get", "MP-001"])
+        assert result.exit_code == 0, result.output
+        assert "status: cancelled" in result.output
 
 
 class TestGet:

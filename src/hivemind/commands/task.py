@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,10 @@ _STORY_TYPES: frozenset[str] = frozenset({"story", "feature"})
 
 # Leaf types that can be assigned as actual work items
 _LEAF_TYPES: frozenset[str] = frozenset({"task", "bug", "chore"})
+
+# Statuses that mean "no further work" — both hide by default and propagate
+# upward when every sibling reaches one of them.
+_TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "cancelled"})
 
 # Valid parent type for each child type
 _VALID_PARENT: dict[str, str | frozenset[str] | None] = {
@@ -318,14 +322,16 @@ def _auto_complete_parents(
 ) -> None:
     """Walk up the hierarchy and auto-complete parents when appropriate.
 
-    When all children of a parent are ``done``, mark the parent ``done``
-    and recurse upward.
+    When every child of a parent has reached a terminal status (``done`` or
+    ``cancelled``), mark the parent terminal too and recurse upward. The
+    parent becomes ``cancelled`` only when every child is ``cancelled``;
+    a mix of ``done`` and ``cancelled`` resolves to ``done`` (some work
+    landed).
     """
     parent_id = task_fm.get("parent")
     if not parent_id or not isinstance(parent_id, str):
         return
 
-    # Build id -> fm lookup
     by_id: dict[str, dict[str, object]] = {}
     for t in all_tasks:
         tid = t.get("id")
@@ -336,40 +342,39 @@ def _auto_complete_parents(
     if parent_fm is None:
         return
 
-    # Already done? Nothing to do.
-    if parent_fm.get("status") == "done":
+    if parent_fm.get("status") in _TERMINAL_STATUSES:
         return
 
-    # Check if all sibling tasks (children of same parent) are done.
     siblings = [t for t in all_tasks if str(t.get("parent", "")) == parent_id]
     if not siblings:
         return
 
-    all_done = all(t.get("status") == "done" for t in siblings)
-    if not all_done:
+    if not all(t.get("status") in _TERMINAL_STATUSES for t in siblings):
         return
 
-    # Auto-complete the parent
+    new_status = (
+        "cancelled"
+        if all(t.get("status") == "cancelled" for t in siblings)
+        else "done"
+    )
+
     parent_path = _find_task_file(data_path, parent_id)
     today = date.today().isoformat()
     now_iso = datetime.now().isoformat()
     update_frontmatter(
         parent_path,
-        {"status": "done", "updated": today, "completed_at": now_iso},
+        {"status": new_status, "updated": today, "completed_at": now_iso},
     )
 
-    # Update task index for the auto-completed parent
     project_name = parent_path.parent.name
     parent_fm_fresh, _ = parse_task(parent_path)
     _update_task_index_entry(data_path, project_name, parent_id, parent_fm_fresh)
 
     parent_type = str(parent_fm.get("type", ""))
-    click.echo(f"Auto-completed: {parent_id} [{parent_type}]")
+    click.echo(f"Auto-completed: {parent_id} [{parent_type}] -> {new_status}")
 
-    # Update the in-memory record so recursive check works
-    parent_fm["status"] = "done"
+    parent_fm["status"] = new_status
 
-    # Recurse: if the parent itself has a parent, check that too
     _auto_complete_parents(data_path, parent_fm, all_tasks)
 
 
@@ -630,7 +635,7 @@ def create(
     "all_tasks",
     is_flag=True,
     default=False,
-    help="Include completed tasks older than 3 days.",
+    help="Include done/cancelled tasks (and epics whose work is finished).",
 )
 def list_cmd(
     project: str | None,
@@ -667,23 +672,11 @@ def list_cmd(
         tasks = [t for t in tasks if t[0].get("priority") == priority]
 
     if not all_tasks:
-        cutoff = datetime.now() - timedelta(days=3)
-        filtered: list[tuple[dict[str, object], str, Path]] = []
-        for fm, body, path in tasks:
-            if fm.get("status") != "done":
-                filtered.append((fm, body, path))
-                continue
-            completed_at = fm.get("completed_at")
-            if completed_at:
-                try:
-                    completed_dt = datetime.fromisoformat(str(completed_at))
-                    if completed_dt >= cutoff:
-                        filtered.append((fm, body, path))
-                except ValueError:
-                    filtered.append((fm, body, path))
-            else:
-                filtered.append((fm, body, path))
-        tasks = filtered
+        tasks = [
+            (fm, body, path)
+            for fm, body, path in tasks
+            if fm.get("status") not in _TERMINAL_STATUSES
+        ]
 
     if not tasks:
         click.echo("No tasks found.")
@@ -835,7 +828,7 @@ def update(
 
     updates["updated"] = date.today().isoformat()
 
-    if status == "done":
+    if status in _TERMINAL_STATUSES:
         updates["completed_at"] = datetime.now().isoformat()
 
     update_frontmatter(task_path, updates)
@@ -851,15 +844,15 @@ def update(
     for key, value in updates.items():
         click.echo(f"  {key}: {value}")
 
-    # Auto-complete parents if status changed to "done"
-    if status == "done":
+    # Auto-complete parents when this task reaches a terminal status.
+    if status in _TERMINAL_STATUSES:
         fm = fm_after
         all_tasks = _load_all_tasks(data_path)
 
         # Update the in-memory copy so sibling check uses current state
         for t in all_tasks:
             if t.get("id") == task_id:
-                t["status"] = "done"
+                t["status"] = status
                 break
 
         _auto_complete_parents(data_path, fm, all_tasks)
@@ -898,12 +891,13 @@ def next_cmd(project: str | None) -> None:
             if not all_done:
                 continue
 
-        # Check that parent (if any) is not done (shouldn't work on tasks
-        # under a completed parent).  Also ensure parent is not blocked.
+        # Skip tasks whose parent is already in a terminal state (done or
+        # cancelled) — no point recommending work under a closed-out story
+        # or epic.
         parent_id = fm.get("parent")
         if parent_id and isinstance(parent_id, str):
             parent_status = status_map.get(parent_id)
-            if parent_status == "done":
+            if parent_status in _TERMINAL_STATUSES:
                 continue
 
         candidates.append((fm, body, path))
