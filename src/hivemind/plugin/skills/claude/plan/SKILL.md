@@ -20,7 +20,7 @@ When decomposing a larger request into tasks, you MUST follow this order:
 ### Phase 1: Harness Documents (MANDATORY before creating tasks)
 
 Before creating ANY tasks, write harness documents to `{data_path}/projects/{project}/`.
-Find the data_path from `.hivemind-link.json` in the project root or from `.hivemind.json`.
+Resolve `{project}` from `cat .hivemind-link.json` and `{data_path}` from `hv config data_path`.
 
 Research what you need (library docs, API specs, etc.) via web search BEFORE writing these documents. The documents must contain enough detail for an agent to implement each task without asking questions.
 

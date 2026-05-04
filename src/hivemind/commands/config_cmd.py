@@ -12,17 +12,27 @@ from hivemind.core.config import HivemindConfig
 
 
 def _resolve_config_path() -> Path:
-    """Find .hivemind.json by checking the default data path."""
-    return Path("~/agent-hivemind-data").expanduser() / ".hivemind.json"
+    """Find .hivemind.json at the canonical v4 location."""
+    from hivemind.core.config import default_config_path
+
+    return default_config_path()
 
 
 def _load_config() -> HivemindConfig:
-    """Load the hivemind config, raising a click error if not found."""
+    """Load the hivemind config, raising a click error if not found.
+
+    Triggers the idempotent v3→v4 migration on first read after upgrade.
+    The path is resolved via :func:`_resolve_config_path` so tests can
+    patch the lookup to a tmp directory.
+    """
     config_path = _resolve_config_path()
     if not config_path.exists():
         raise click.ClickException(
             f"Config not found at {config_path}. Run 'hv init' first."
         )
+    from hivemind.core.migration import migrate_v3_to_v4
+
+    migrate_v3_to_v4(config_path)
     return HivemindConfig.load(config_path)
 
 
@@ -57,6 +67,11 @@ def _walk_nested(value: Any, parts: list[str]) -> Any:
 
 def _get_effective_value(cfg: HivemindConfig, key: str) -> Any:
     """Get a config value with runtime-aware aliases for model settings."""
+    if key == "data_path":
+        # v4: data_path is derived from the config file's parent dir,
+        # not stored as a JSON field. Surface it via the property so
+        # callers (skills, scripts) can rely on `hv config data_path`.
+        return str(cfg.data_path)
     if key == "model_profile":
         return cfg.runtime_model_profile()
     if key == "profiles":

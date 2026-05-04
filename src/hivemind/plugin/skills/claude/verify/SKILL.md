@@ -17,7 +17,14 @@ Reads the project's `verify.md` and executes each stage's commands. Reports pass
 
 ### 1. Identify the project
 
-Read `.hivemind-link.json` in cwd to get `data_path` and `project`. If missing, ask the user to run `/hv:init` first.
+```bash
+cat .hivemind-link.json     # for project name
+hv config data_path         # for the absolute data dir
+```
+
+If `.hivemind-link.json` is missing, ask the user to run `/hv:init` first.
+The link file under v4 carries only `{project, prefix}`; data_path is
+derived from the global config's location and surfaced via `hv config`.
 
 ### 2. Load verify.md
 

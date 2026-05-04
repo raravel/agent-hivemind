@@ -23,7 +23,12 @@ You apply the rubric in [references/rubric.md](references/rubric.md) to the curr
 
 ### 1. Identify the project
 
-Read `.hivemind-link.json` in the cwd for the project name. If missing, ask the user which linked project to score.
+```bash
+cat .hivemind-link.json     # for project name
+hv config data_path         # for the absolute data dir (used in step 3)
+```
+
+If `.hivemind-link.json` is missing, ask the user which linked project to score.
 
 ### 2. Cache check
 

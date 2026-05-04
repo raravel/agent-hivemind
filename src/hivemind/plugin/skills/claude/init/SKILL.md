@@ -31,25 +31,25 @@ hv link --target claude
 ```
 
 This:
-- Creates `.hivemind-link.json` in the project root (POSIX-normalized paths)
+- Creates `.hivemind-link.json` (carries only `{project, prefix}` under v4)
 - Creates `projects/{name}/`, `tasks/{name}/`, `level3/{name}/` in the data directory
-- Registers the project in `.hivemind.json`
+- Registers the project's `linked_path` in `.hivemind.json`
 - Writes a managed `AGENTS.md` block as the canonical shared instructions file
 - For Claude targets, writes a managed `CLAUDE.md` shim with native `@import`
   references to `architecture.md` and `rules.md`
 - For Codex targets, writes repo-local `.codex/hooks.json`
 
-**Step 3.** If this is an existing v2 installation, run the migration:
+**Step 3.** If this is an existing v2 or v3 installation, run the migration:
 
 ```bash
-hv migrate --to v3
+hv migrate --to v4
 ```
 
-This normalizes any Windows-style paths in `.hivemind-link.json`, removes any
-legacy `obsidian-import` line from `CLAUDE.md`, renames `build-verify.md` →
-`verify.md`, archives old per-prompt L3 files, and reseeds model profile IDs
-(`claude-opus-4-7` / `claude-sonnet-4-6` / `claude-haiku-4-5`) and the
-pricing + parallel sections in `.hivemind.json`. Running twice is a no-op.
+`--to v4` drops the legacy `data_path` field from `.hivemind.json`, drains
+each project's `prefix` into its `.hivemind-link.json`, splits `counter`
+into `<data_path>/tasks/<project>/_counter.json`, and bumps the schema to
+4.0.0. Running twice is a no-op. (`--to v3` is still available for older
+v1/v2 workspaces and is also idempotent.)
 
 **Step 4.** Report what was done and suggest next steps:
 - "Run `/hv:plan` to plan your project"

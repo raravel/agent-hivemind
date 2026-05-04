@@ -18,13 +18,14 @@ Creates `verify.md` in the project's harness spec directory. This file is the si
 
 ### 1. Find the project
 
-Read `.hivemind-link.json` in cwd:
-
 ```bash
-cat .hivemind-link.json
+cat .hivemind-link.json     # for project name (and prefix)
+hv config data_path         # for the absolute data dir
 ```
 
-Extract `project` (name) and `data_path`. If the file is missing, ask the user to run `hv-init` first.
+If `.hivemind-link.json` is missing, ask the user to run `hv-init` first.
+The link file under v4 carries only `{project, prefix}`; data_path comes
+from the global config and is surfaced via `hv config`.
 
 Construct the target path:
 ```
