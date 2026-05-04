@@ -375,6 +375,104 @@ class TestGlobalConfig:
         assert "data_path" not in on_disk
 
 
+class TestFindForCommand:
+    """Tests for the consolidated find_for_command CLI helper."""
+
+    def test_raises_when_no_candidate_exists(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(FileNotFoundError):
+            HivemindConfig.find_for_command()
+
+    def test_finds_canonical_and_auto_migrates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import json as _json
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        # Use a separate cwd so the cwd candidate doesn't shadow the canonical one.
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        canonical_dir = tmp_path / "agent-hivemind-data"
+        canonical_dir.mkdir()
+        (canonical_dir / ".hivemind.json").write_text(
+            _json.dumps(
+                {"version": "3.0.0", "data_path": str(canonical_dir), "projects": {}}
+            ),
+            encoding="utf-8",
+        )
+
+        cfg = HivemindConfig.find_for_command()
+        assert cfg.get("version") == "4.0.0"
+        on_disk = _json.loads(
+            (canonical_dir / ".hivemind.json").read_text(encoding="utf-8")
+        )
+        assert on_disk["version"] == "4.0.0"
+        assert "data_path" not in on_disk
+
+    def test_non_canonical_candidate_is_not_auto_migrated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import json as _json
+
+        # Redirect HOME so the canonical path lives under a clean tmp dir
+        # but does not exist on disk; the cwd candidate must be picked instead.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        cwd_dir = tmp_path / "project"
+        cwd_dir.mkdir()
+        monkeypatch.chdir(cwd_dir)
+
+        cwd_config = cwd_dir / ".hivemind.json"
+        v3_payload = {
+            "version": "3.0.0",
+            "data_path": str(cwd_dir),
+            "projects": {},
+        }
+        cwd_config.write_text(_json.dumps(v3_payload), encoding="utf-8")
+        before = cwd_config.read_text(encoding="utf-8")
+
+        cfg = HivemindConfig.find_for_command()
+        # Picked the cwd candidate, version stays at v3 — the non-canonical
+        # path is left alone so test fixtures and one-off layouts don't get
+        # rewritten on every CLI invocation.
+        assert cfg.get("version") == "3.0.0"
+        assert cwd_config.read_text(encoding="utf-8") == before
+
+    def test_cwd_candidate_takes_precedence_over_canonical(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import json as _json
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        cwd_dir = tmp_path / "project"
+        cwd_dir.mkdir()
+        monkeypatch.chdir(cwd_dir)
+
+        # Both layouts exist; cwd should win.
+        canonical_dir = tmp_path / "agent-hivemind-data"
+        canonical_dir.mkdir()
+        (canonical_dir / ".hivemind.json").write_text(
+            _json.dumps({"version": "4.0.0", "projects": {"canonical": {}}}),
+            encoding="utf-8",
+        )
+        (cwd_dir / ".hivemind.json").write_text(
+            _json.dumps({"version": "4.0.0", "projects": {"cwd": {}}}),
+            encoding="utf-8",
+        )
+
+        cfg = HivemindConfig.find_for_command()
+        assert "cwd" in cfg.raw["projects"]
+        assert "canonical" not in cfg.raw["projects"]
+
+
 class TestNormalizeDataPath:
     """Tests for the normalize_data_path helper."""
 

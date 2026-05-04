@@ -548,3 +548,73 @@ class TestMigrateV3NodeHooks:
         after = json.loads(settings.read_text(encoding="utf-8"))
         assert after["hooks"]["PreToolUse"] == []
         assert after["hooks"]["UserPromptSubmit"] == []
+
+
+class TestMigrateCLIToV4:
+    """Tests for the `hv migrate --to v4` CLI dispatch."""
+
+    def test_v4_dispatch_migrates_and_reports(self, tmp_path: Path) -> None:
+        from click.testing import CliRunner
+
+        from hivemind.commands.migrate import migrate_cmd
+
+        data = tmp_path / "data"
+        data.mkdir()
+        config = data / ".hivemind.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "version": "3.0.0",
+                    "data_path": str(data),
+                    "projects": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            migrate_cmd,
+            ["--to", "v4", "--path", str(data), "--no-backup"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Migrated" in result.output
+        parsed = json.loads(config.read_text(encoding="utf-8"))
+        assert parsed["version"] == "4.0.0"
+        assert "data_path" not in parsed
+
+    def test_v4_dispatch_idempotent(self, tmp_path: Path) -> None:
+        from click.testing import CliRunner
+
+        from hivemind.commands.migrate import migrate_cmd
+
+        data = tmp_path / "data"
+        data.mkdir()
+        (data / ".hivemind.json").write_text(
+            json.dumps({"version": "4.0.0", "projects": {}}),
+            encoding="utf-8",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            migrate_cmd, ["--to", "v4", "--path", str(data), "--no-backup"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "Already on v4" in result.output
+
+    def test_v4_dispatch_errors_when_config_missing(
+        self, tmp_path: Path
+    ) -> None:
+        from click.testing import CliRunner
+
+        from hivemind.commands.migrate import migrate_cmd
+
+        data = tmp_path / "data"
+        data.mkdir()  # data dir exists but no .hivemind.json inside
+
+        runner = CliRunner()
+        result = runner.invoke(
+            migrate_cmd, ["--to", "v4", "--path", str(data), "--no-backup"]
+        )
+        assert result.exit_code != 0
+        assert "hv init" in result.output
