@@ -4,6 +4,8 @@ description: "This skill MUST be invoked BEFORE any implementation begins when t
 
 # hv-clarify -- Requirement ambiguity resolution
 
+> **Worker-mode guard (CRITICAL for this skill).** If you were spawned as a sub-worker by another orchestrator (for example via `codex:codex-rescue` from inside `hv-task`), do NOT engage this skill. The orchestrator has already done clarification before delegating; you must execute the prompt literally instead of asking Socratic questions. Signals you are a sub-worker: the prompt starts with `--fresh` or `--resume`, or contains explicit instructions like "Step A:", "Step B:", "Review only", "Implement <TASK-ID>", or "Edit only inside the current working directory". This guard overrides the "MUST be invoked BEFORE any implementation" wording in the description above when sub-worker signals are present.
+
 Evaluates implementation requests across 7 ambiguity axes using Socratic questioning. Iterates until all axes score <= 0.2 before allowing work to begin.
 
 ## When to use

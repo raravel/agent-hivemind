@@ -4,6 +4,8 @@ description: "Task planning and decomposition. Use when the user wants to plan a
 
 # hv-plan -- Task planning and decomposition
 
+> **Worker-mode guard.** If you were spawned as a sub-worker by another orchestrator (for example via `codex:codex-rescue` from inside `hv-task`), do NOT engage this skill. Read the orchestrator's prompt literally and execute exactly what it asks. The hv-* skills are for direct user invocation, not nested execution. Signals you are a sub-worker: the prompt starts with `--fresh` or `--resume`, or contains explicit instructions like "Step A:", "Step B:", "Review only", "Implement <TASK-ID>", or "Edit only inside the current working directory".
+
 Plans a project by creating harness documents (specs) first, then decomposing work into concrete tasks with completion criteria.
 
 ## When to use

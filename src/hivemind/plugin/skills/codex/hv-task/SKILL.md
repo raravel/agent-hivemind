@@ -4,6 +4,8 @@ description: "Execute tasks through the orchestrator pipeline (delegate coding/r
 
 # hv-task -- Task execution pipeline (Orchestrator model)
 
+> **Worker-mode guard (CRITICAL — prevents recursion).** If you were spawned as a sub-worker by another orchestrator (for example via `codex:codex-rescue` from inside another `hv-task` run), do NOT engage this skill. The orchestrator that spawned you needs you to execute its prompt literally — implement code, write a failing check, or produce a review — not start your own pipeline. Signals you are a sub-worker: the prompt starts with `--fresh` or `--resume`, or contains explicit instructions like "Step A:", "Step B:", "Review only", "Implement <TASK-ID>", or "Edit only inside the current working directory".
+
 You are the **orchestrator**. Workers run in isolated git worktrees. You never trust a worker's completion claim. You pull results into your own context, verify directly, judge reviews on a 4-axis rubric, and record tokens/cost per run.
 
 ## When to use
@@ -72,6 +74,17 @@ Profile returns `{planner, executor, reviewer}` with concrete model IDs
 (e.g. `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5`).
 Pricing is a map of `model_id -> {input, output}` dollars per Mtoken. Keep both in context — you use pricing to estimate cost in the report.
 
+**Provider routing (optional)**: the profile may include `coder_provider` and/or `reviewer_provider`, each one of `claude` (default) or `codex`. Read them:
+
+```bash
+hv config profiles.<profile_name>.coder_provider
+hv config profiles.<profile_name>.reviewer_provider
+```
+
+`null` / empty / missing → treat as `claude`. When EITHER provider is `codex`:
+- **Force sequential mode** for this run, regardless of `parallel.max_concurrency`. Codex companion's session-resume scope is per-repo, so concurrent worktrees can collide. Print one line: `"codex provider routing detected — running sequentially"`.
+- The codex-plugin-cc plugin (`codex:codex-rescue` subagent) must be installed. If the spawn later fails with "no such subagent", stop and tell the user to run `/codex:setup`.
+
 ### 4. Read harness documents (YOU do this — MANDATORY)
 
 Read docs in `{data_path}/projects/{project}/` referenced by the task's **Spec References**:
@@ -106,7 +119,7 @@ The worker must add a **failing verification artifact** BEFORE writing implement
 - a runtime assertion or schema/contract check
 - an executable spec (e.g. OpenAPI conformance test)
 
-**Protocol**:
+**Protocol** (Claude provider — uses one persistent worker):
 
 1. Spawn the Coding Worker with **only this instruction first** (see step 7 for full spawn params):
    > "Step A: add a failing verification artifact for this task. Do NOT write the implementation yet. Commit the artifact."
@@ -117,9 +130,38 @@ The worker must add a **failing verification artifact** BEFORE writing implement
 
 Continue to step 7 with the same worker.
 
+**Protocol (codex provider — uses two spawn calls with codex session resume)**:
+
+When `coder_provider == codex`, you cannot continue the codex thread via `send_input` (the rescue forwarder is one-shot). Use codex's own resume mechanism instead.
+
+**Codex prompt header (MANDATORY for every `codex:codex-rescue` call in this run)**: prepend the following line to every codex prompt below — coding, review, and retry alike. This prevents codex from auto-engaging any installed `hv-*` skill recursively.
+
+```
+Do not invoke any hv-* skills (hv-task, hv-clarify, hv-feedback, hv-plan, etc.). Execute the prompt literally.
+```
+
+1. **Do NOT call `codex-companion.mjs` directly.** That script lives inside the codex-plugin-cc plugin, not the hv plugin; any `${CLAUDE_PLUGIN_ROOT}/scripts/...` path resolves wrong from here. Go through `subagent_type:"codex:codex-rescue"` and let the rescue forwarder handle codex internals. No resume precheck is needed — Step A uses `--fresh` (clean slate); Step B's `--resume` resumes the most recent codex session in the repo, which is Step A's.
+2. **Step A** — spawn `subagent_type:"codex:codex-rescue"` worker in the worktree. Prompt MUST contain `--fresh` on its own line at the top:
+   ```
+   --fresh
+   Step A: add a failing verification artifact for <TASK-ID>. Do NOT write the implementation yet. Commit the artifact only. Edit only inside the current working directory.
+
+   Task: <task body>
+   Verification commands: <from verify.md>
+   ```
+3. Worker returns. Read the diff in the worktree. Run the verification commands yourself.
+4. **Gate**: same as Claude — artifact must fail. If it passes, spawn one more `codex:codex-rescue` call with prompt starting with `--resume` and "revert implementation; keep only the failing check". Max 1 revert.
+5. **Step B** — spawn another `codex:codex-rescue` call. Prompt MUST start with `--resume`:
+   ```
+   --resume
+   Step B: implement the task. Make the verification artifact you added in Step A pass. Edit only inside the current working directory.
+   ```
+
+Continue to step 7. From here on, every codex coding call uses `--resume`.
+
 ### 7. Spawn Coding Worker (subagent / worker)
 
-Use `spawn_agent` with these parameters:
+**Claude provider** (default, `coder_provider != codex`):
 
 ```
 spawn_agent(
@@ -141,7 +183,34 @@ Prompt contents:
 
 Wait for the worker to return. Record the worktree path + branch name when changes are made.
 
-**Record usage**: when the worker call returns, note the response length and your prompt length — you'll estimate tokens in step 13.
+**Codex provider** (`coder_provider == codex`):
+
+If you came through the codex Step A→B verify-first gate (step 6), Step B already covers the initial implementation; skip the spawn here and go to step 8 directly. If verify-first was skipped (`verification_required: false` or type `chore`/`docs`):
+
+```
+spawn_agent(
+  subagent_type: "codex:codex-rescue",
+  isolation: "worktree",
+  description: "Implement <TASK-ID>",
+  prompt: <see below>,
+)
+```
+
+Prompt format (the rescue forwarder strips routing tokens before passing the rest to `codex task`):
+```
+--fresh
+Implement <TASK-ID>. Edit only inside the current working directory. Do NOT mark the task as done; the orchestrator handles that.
+
+Task: <task body + completion criteria>
+Harness docs (read these first): <explicit paths>
+Verification commands: <from verify.md>
+Project rules: <from rules.md>
+Relevant lessons: <from step 5>
+```
+
+The codex executor model is whatever codex CLI defaults to (or `~/.codex/config.toml`'s `model`). Do NOT pass `--model` unless the user explicitly set one. The profile's `executor` field is recorded in the report but does not select the codex model.
+
+**Record usage**: when the worker call returns, note the response length and your prompt length — you'll estimate tokens in step 13. **Codex token usage is opaque** — record only what you can see (your prompt + response chars) and mark `codex_usage.tracked: false` in the report.
 
 ### 8. Verify coding output (YOU do this — NEVER skip)
 
@@ -154,7 +223,11 @@ For each task:
    [PASS] API endpoint returns 200 on POST /api/todos
    [FAIL] Rate limiting at 100 req/min — no rate limit code found
    ```
-4. **On any [FAIL]**: use `send_input` to the same worker with the failed criteria. Max 2 coding retries.
+4. **On any [FAIL]**:
+   - Claude provider: use `send_input` to the same worker with the failed criteria.
+   - Codex provider: spawn a fresh `codex:codex-rescue` worker whose prompt starts with `--resume` so the rescue forwarder issues `codex task --resume-last`. Include the failed criteria verbatim. Each retry is a separate spawn but lands in the same codex thread.
+
+   Max 2 coding retries.
 
 ### 9. Run verification commands (YOU do this — NEVER delegate)
 
@@ -170,10 +243,14 @@ Or `cd <worktree> && <command>`.
 Read the output yourself. Do not trust exit codes alone. If the verification artifact from step 6 now passes and any pre-existing checks still pass → success.
 
 If checks fail:
-1. Use `send_input` to the coding worker with the failing output.
+1. Send the failing output to the coding worker:
+   - Claude provider: `send_input` to the same worker.
+   - Codex provider: spawn a fresh `codex:codex-rescue` worker with prompt starting `--resume` and the failing output appended.
 2. Worker fixes. Re-run. Max 2 verification retries.
 
 ### 10. Spawn Review Worker (subagent / worker)
+
+**Claude provider** (default, `reviewer_provider != codex`):
 
 ```
 spawn_agent(
@@ -200,6 +277,44 @@ Prompt contents:
 
 Wait for the worker to return.
 
+**Codex provider** (`reviewer_provider == codex`, adversarial review tone):
+
+`/codex:adversarial-review` is `disable-model-invocation: true` — you cannot trigger it. Route the review through `codex:codex-rescue` with a strict review-only prompt instead. The rescue forwarder skips `--write` when the request clearly asks for review-only behavior, so the prompt MUST make that explicit.
+
+```
+spawn_agent(
+  subagent_type: "codex:codex-rescue",
+  isolation: "worktree",
+  description: "Review <TASK-ID>",
+  prompt: <see below>,
+)
+```
+
+Prompt format:
+```
+--fresh
+Review only. Do NOT edit any files. Do NOT write. Do NOT apply patches. Read-only adversarial review.
+
+Challenge the implementation: question the chosen approach, design tradeoffs, and assumptions. Then output a structured review with two sections:
+
+1. `Findings` — list each issue with severity (blocking|advisory).
+2. `Rubric` — score each axis 0–10 and explain each score in one sentence:
+   - correctness
+   - spec_compliance
+   - safety
+   - clarity
+
+Return the review as plain markdown.
+
+Diff to review:
+<full git diff of the worker branch>
+
+Harness docs (read these first): <explicit paths to architecture.md, rules.md>
+Boundary-mismatch checklist: API/type/import consistency, harness rule violations.
+```
+
+Wait for the worker to return. Rubric scores from a codex reviewer may show more variance than Claude — that is expected for the verification trial.
+
 ### 11. Judge review output (YOU do this — 4-axis rubric)
 
 Read the review worker's output. Extract the four rubric scores. Apply blocking thresholds:
@@ -212,13 +327,24 @@ Read the review worker's output. Extract the four rubric scores. Apply blocking 
 | clarity | 0–10 | advisory only |
 
 If any axis is below its blocking threshold, OR the `Findings` section lists a `blocking` item:
-1. Use `send_input` to the coding worker with the review output.
+1. Send the review output to the coding worker:
+   - Claude provider: `send_input` to the same worker.
+   - Codex provider: spawn a fresh `codex:codex-rescue` worker with prompt starting `--resume` and the review output appended.
 2. Worker fixes. Re-verify (step 8) and re-run verification (step 9).
 3. Max 1 review round.
 
 Record `review_scores` and `blocking_issues` for step 13.
 
 ### 12. Merge worker branch + mark done
+
+**Worktree edit-scope sanity check (codex provider only)**: codex CLI inherits CWD but is not formally sandboxed to the worktree. Before merging, verify nothing leaked outside:
+
+```bash
+git -C <project_root> status --short
+git -C <worktree> status --short
+```
+
+If `<project_root> status` shows modifications that aren't from the worker's branch (and aren't in the staged merge), stop and ask the user — do NOT auto-revert; codex may have touched a sibling file the orchestrator needs to see.
 
 Merge the worker's branch into the main branch of the project repo (single worktree merge for sequential; one-at-a-time for parallel):
 
@@ -269,6 +395,12 @@ profile: <quality|balanced|budget>
 models:
   executor: <model-id>
   reviewer: <model-id>
+providers:
+  coder: <claude|codex>
+  reviewer: <claude|codex>
+codex_usage:
+  tracked: false
+  note: "Codex token usage is not visible to the orchestrator; check ChatGPT/OpenAI dashboard separately"
 ---
 
 ## Summary
@@ -291,10 +423,12 @@ models:
 - `input_tokens ≈ ceil(len(prompt_chars) / 3.5)` for every worker call
 - `output_tokens ≈ ceil(len(response_chars) / 3.5)`
 - Sum across all worker calls for this task (coding worker round-trips + review worker)
+- For codex-rescue calls: count only the prompt the orchestrator sent and the stdout returned. The codex CLI's internal model tokens are NOT visible — those are the savings the trial is measuring.
 
 **Cost**:
 - For each model used, `cost = (input_tokens / 1_000_000) * pricing[model].input + (output_tokens / 1_000_000) * pricing[model].output`
 - Sum across models → `cost_usd`, rounded to 2 decimal places
+- `cost_usd` covers Claude-side cost only. Codex usage shows up on the OpenAI/ChatGPT account, not here.
 
 ### 14. Incident section (conditional, automatic)
 
@@ -370,6 +504,8 @@ Proceed immediately to the next task:
 
 If `parallel.max_concurrency = 1` or `--sequential` is passed: fall back to the sequential flow.
 
+**Codex routing forces sequential.** If `coder_provider == codex` OR `reviewer_provider == codex` for the active profile, ignore parallel mode for this run and use the sequential flow. Codex companion's `task-resume-candidate` is per-repo, so two concurrent worktrees would collide on the resume thread. (See step 3.)
+
 ## Retry & Escalation
 
 | Stage | Max | Method | On exhaustion |
@@ -397,7 +533,8 @@ Record incident in report, proceed to next task (do NOT stop the pipeline).
 - **ALWAYS** use `hv run --format json` (sequential) or `hv run --ready-only --limit N` (parallel) for structured task data.
 - **ALWAYS** mark task `in_progress` before starting work.
 - **ALWAYS** use the model IDs from `hv config profiles.<profile>`. Do NOT hardcode.
-- **ALWAYS** use `send_input` to continue a worker (preserves worktree + context).
+- **ALWAYS** use `send_input` to continue a Claude worker (preserves worktree + context). For codex workers, spawn a fresh `codex:codex-rescue` call with prompt starting `--resume` — the codex companion handles `--resume-last` routing.
+- **ALWAYS** force sequential mode when any provider is `codex` (codex resume scope is per-repo).
 - **ALWAYS** estimate tokens and compute cost for the report. Use `hv config pricing`.
 - **ALWAYS** run `hv` CLI commands via the Bash tool.
 - **NEVER** write reports or feedback in Korean. English only for BM25 consistency.
