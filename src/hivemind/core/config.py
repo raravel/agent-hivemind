@@ -1,4 +1,12 @@
-"""Config management for .hivemind.json (v3 schema)."""
+"""Config management for .hivemind.json (v4 schema).
+
+v4 invariant: the global config lives at ``<data_path>/.hivemind.json``.
+``data_path`` is derived from the config file's parent directory and is
+no longer persisted as a top-level field. Legacy v3 files (with a
+``data_path`` field at the top level) continue to load — the field is
+simply ignored by the runtime — but ``hv migrate --to v4`` is the
+intended path to refresh them.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +16,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+CONFIG_FILENAME = ".hivemind.json"
 DEFAULT_DATA_PATH = "~/agent-hivemind-data"
+SCHEMA_VERSION = "4.0.0"
 SUPPORTED_TARGETS = ("claude", "codex")
 
 # Per-Mtoken USD pricing, seeded from public Anthropic pricing. Users may
@@ -88,10 +98,9 @@ def expand_target_selection(target: str) -> list[str]:
 
 
 def default_config() -> dict[str, Any]:
-    """Return default v3 config dict."""
+    """Return default v4 config dict (no top-level data_path)."""
     return {
-        "version": "3.0.0",
-        "data_path": DEFAULT_DATA_PATH,
+        "version": SCHEMA_VERSION,
         "git_enabled": False,
         "auto_commit": False,
         "model_profile": "balanced",
@@ -108,11 +117,22 @@ def default_config() -> dict[str, Any]:
     }
 
 
-def data_path_for_storage(p: Path | str) -> str:
-    """Normalize a path for cross-platform storage in JSON configs.
+def default_config_path() -> Path:
+    """Return the canonical global config path.
 
-    Uses ``~`` prefix when the path lives under HOME so the file stays
-    portable across machines. Always writes POSIX-style separators.
+    Always ``<DEFAULT_DATA_PATH>/.hivemind.json``. v4 dropped the legacy
+    finder candidates (``cwd/.hivemind.json``, ``~/.hivemind.json``) so
+    every caller resolves to the same on-disk location.
+    """
+    return Path(DEFAULT_DATA_PATH).expanduser() / CONFIG_FILENAME
+
+
+def data_path_for_storage(p: Path | str) -> str:
+    """Normalize a path for cross-platform storage in JSON.
+
+    Used by migration tooling and link/instruction writers that still
+    need to record an absolute path in committed files. The runtime
+    config no longer stores ``data_path``.
     """
     path = Path(str(p)).expanduser().resolve()
     try:
@@ -130,10 +150,13 @@ def _looks_like_foreign_windows(raw: str) -> bool:
 
 
 def normalize_data_path(raw: str | Path | None) -> Path:
-    """Resolve a stored ``data_path`` value to a usable Path.
+    """Resolve a stored ``data_path`` value (legacy/migration helper).
 
-    Falls back to ``~/agent-hivemind-data`` when *raw* is empty or carries a
-    path from a foreign platform (e.g. ``C:\\...`` on macOS).
+    Reads from legacy v3 ``.hivemind.json`` snapshots or from
+    ``.hivemind-link.json`` files written before the v4 schema migration
+    landed. Falls back to ``~/agent-hivemind-data`` when *raw* is empty
+    or carries a foreign-platform path. New runtime code should use
+    :pyattr:`HivemindConfig.data_path` instead.
     """
     default = Path(DEFAULT_DATA_PATH).expanduser().resolve()
     if not raw:
@@ -145,19 +168,40 @@ def normalize_data_path(raw: str | Path | None) -> Path:
 
 
 class HivemindConfig:
-    """Reads and writes .hivemind.json."""
+    """Reads and writes ``.hivemind.json``.
+
+    Under the v4 schema the data directory is the parent of the config
+    file. Callers should resolve the global config via
+    :pymeth:`load_global` and read paths from
+    :pyattr:`data_path`/:pyattr:`path`.
+    """
 
     def __init__(self, path: Path, data: dict[str, Any]) -> None:
-        self._path = path
+        self._path = Path(path).expanduser().resolve()
         self._data = data
 
     @staticmethod
     def load(path: Path | str) -> HivemindConfig:
-        """Load config from a .hivemind.json file path."""
-        path = Path(path)
-        with path.open("r", encoding="utf-8") as f:
+        """Load config from a ``.hivemind.json`` file path."""
+        resolved = Path(path).expanduser().resolve()
+        with resolved.open("r", encoding="utf-8") as f:
             data: dict[str, Any] = json.load(f)
-        return HivemindConfig(path, data)
+        return HivemindConfig(resolved, data)
+
+    @staticmethod
+    def load_global() -> HivemindConfig:
+        """Load the global config from the canonical location.
+
+        Raises :class:`FileNotFoundError` when the config does not exist.
+        CLI commands should translate this into a user-facing error
+        pointing at ``hv init``.
+        """
+        path = default_config_path()
+        if not path.exists():
+            raise FileNotFoundError(
+                f"No hivemind config at {path}. Run `hv init` first."
+            )
+        return HivemindConfig.load(path)
 
     def save(self) -> None:
         """Write config to path."""
@@ -197,7 +241,13 @@ class HivemindConfig:
     def set_project(
         self, name: str, prefix: str, linked_path: str
     ) -> None:
-        """Add or update a project entry."""
+        """Add or update a project entry.
+
+        Note: ``prefix`` is still accepted for backward compatibility
+        during the v3→v4 migration window. Step 3 of the schema cleanup
+        will move ``prefix`` into ``.hivemind-link.json`` and drop it
+        from this signature.
+        """
         if "projects" not in self._data or not isinstance(
             self._data["projects"], dict
         ):
@@ -244,10 +294,24 @@ class HivemindConfig:
         return changed
 
     @property
+    def path(self) -> Path:
+        """Return the resolved config file path."""
+        return self._path
+
+    @property
     def data_path(self) -> Path:
-        """Return resolved data path, cross-platform safe."""
+        """Return the data directory.
+
+        Under v4 this is the config file's parent directory. During the
+        v3 → v4 transition, a legacy top-level ``data_path`` field still
+        wins when present so existing installations and v3-shaped test
+        fixtures keep working. ``hv migrate --to v4`` drops the field
+        once the on-disk layout matches ``<data_path>/.hivemind.json``.
+        """
         raw = self._data.get("data_path")
-        return normalize_data_path(raw if isinstance(raw, str) else None)
+        if isinstance(raw, str) and raw:
+            return normalize_data_path(raw)
+        return self._path.parent
 
     @property
     def default_target(self) -> str:

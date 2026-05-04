@@ -9,10 +9,13 @@ import pytest
 
 from hivemind.core.config import (
     CLAUDE_DEFAULT_PRICING,
+    CONFIG_FILENAME,
     DEFAULT_PRICING,
+    SCHEMA_VERSION,
     HivemindConfig,
     data_path_for_storage,
     default_config,
+    default_config_path,
     expand_target_selection,
     normalize_data_path,
 )
@@ -27,13 +30,13 @@ class TestDefaultConfig:
 
     def test_version(self) -> None:
         cfg = default_config()
-        assert cfg["version"] == "3.0.0"
+        assert cfg["version"] == SCHEMA_VERSION
+        assert cfg["version"] == "4.0.0"
 
     def test_has_all_top_level_keys(self) -> None:
         cfg = default_config()
         expected_keys = {
             "version",
-            "data_path",
             "git_enabled",
             "auto_commit",
             "model_profile",
@@ -46,6 +49,10 @@ class TestDefaultConfig:
             "runtime_models",
         }
         assert set(cfg.keys()) == expected_keys
+
+    def test_no_top_level_data_path(self) -> None:
+        cfg = default_config()
+        assert "data_path" not in cfg
 
     def test_profiles_use_concrete_model_ids(self) -> None:
         cfg = default_config()
@@ -171,7 +178,7 @@ class TestGetSet:
 
     def test_get_top_level(self, tmp_path: Path) -> None:
         cfg = self._make_config(tmp_path)
-        assert cfg.get("version") == "3.0.0"
+        assert cfg.get("version") == "4.0.0"
 
     def test_get_nested(self, tmp_path: Path) -> None:
         cfg = self._make_config(tmp_path)
@@ -279,34 +286,65 @@ class TestProjectManagement:
 
 
 class TestDataPath:
-    """Tests for data_path property."""
+    """Tests for data_path property — derived from config file location."""
 
-    def test_expands_tilde(self, tmp_path: Path) -> None:
+    def test_data_path_is_config_parent(self, tmp_path: Path) -> None:
         cfg = HivemindConfig(tmp_path / ".hivemind.json", default_config())
-        result = cfg.data_path
-        assert "~" not in str(result)
-        assert result.is_absolute()
+        assert cfg.data_path == tmp_path.resolve()
 
-    def test_custom_data_path(self, tmp_path: Path) -> None:
+    def test_data_path_absolute(self, tmp_path: Path) -> None:
+        cfg = HivemindConfig(tmp_path / ".hivemind.json", default_config())
+        assert cfg.data_path.is_absolute()
+        assert "~" not in str(cfg.data_path)
+
+    def test_legacy_data_path_field_wins_during_transition(
+        self, tmp_path: Path
+    ) -> None:
+        """v3 fixtures with an explicit ``data_path`` field still resolve.
+
+        The v4 schema drops the field, but until ``hv migrate --to v4``
+        rewrites a config the runtime honours the legacy value so
+        existing data layouts keep working.
+        """
         data = default_config()
-        data["data_path"] = str(tmp_path / "custom-data")
+        legacy = tmp_path / "legacy-data"
+        legacy.mkdir()
+        data["data_path"] = str(legacy)
         cfg = HivemindConfig(tmp_path / ".hivemind.json", data)
-        assert cfg.data_path == tmp_path / "custom-data"
+        assert cfg.data_path == legacy.resolve()
 
-    def test_default_data_path(self, tmp_path: Path) -> None:
-        cfg = HivemindConfig(tmp_path / ".hivemind.json", default_config())
-        assert cfg.data_path.name == "agent-hivemind-data"
 
-    def test_foreign_windows_path_falls_back_to_default(
+class TestGlobalConfig:
+    """Tests for canonical-path resolver and load_global."""
+
+    def test_default_config_path(self) -> None:
+        path = default_config_path()
+        assert path.name == CONFIG_FILENAME
+        assert path.parent.name == "agent-hivemind-data"
+        assert path.is_absolute()
+
+    def test_load_global_missing_raises(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("sys.platform", "darwin")
-        data = default_config()
-        data["data_path"] = "C:\\Users\\ifthe\\agent-hivemind-data"
-        cfg = HivemindConfig(tmp_path / ".hivemind.json", data)
-        # Should fall back to ~/agent-hivemind-data, not the Windows string
-        assert cfg.data_path.name == "agent-hivemind-data"
-        assert "C:" not in str(cfg.data_path)
+        # Redirect HOME so the canonical path lives under a clean tmp dir.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        with pytest.raises(FileNotFoundError):
+            HivemindConfig.load_global()
+
+    def test_load_global_returns_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        target_dir = tmp_path / "agent-hivemind-data"
+        target_dir.mkdir()
+        target_path = target_dir / ".hivemind.json"
+        HivemindConfig(target_path, default_config()).save()
+
+        loaded = HivemindConfig.load_global()
+        assert loaded.path == target_path.resolve()
+        assert loaded.data_path == target_dir.resolve()
 
 
 class TestNormalizeDataPath:
