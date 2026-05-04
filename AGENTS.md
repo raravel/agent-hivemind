@@ -1,8 +1,6 @@
 <!-- hivemind:start -->
 # Hivemind Project
 - project: agent-hivemind
-- data_path: ~/agent-hivemind-data
-- targets: codex
 
 When planning or executing tracked work, consult the linked hivemind project docs under:
 - ~/agent-hivemind-data/projects/agent-hivemind/
