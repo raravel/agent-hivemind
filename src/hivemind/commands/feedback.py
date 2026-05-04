@@ -106,19 +106,12 @@ def _slugify(text: str) -> str:
 
 
 def _resolve_data_path(project: str) -> Path:
-    """Resolve the data path from config or default."""
-    config_candidates = [
-        Path.cwd() / ".hivemind.json",
-        Path("~/.hivemind.json").expanduser(),
-        Path("~/agent-hivemind-data/.hivemind.json").expanduser(),
-    ]
-
-    for config_path in config_candidates:
-        if config_path.exists():
-            cfg = HivemindConfig.load(config_path)
-            return cfg.data_path
-
-    return Path("~/agent-hivemind-data").expanduser()
+    """Resolve the data path from the config (canonical or legacy candidate)."""
+    del project  # accepted for call-site clarity; resolution is project-agnostic
+    try:
+        return HivemindConfig.find_for_command().data_path
+    except FileNotFoundError:
+        return Path("~/agent-hivemind-data").expanduser()
 
 
 def _update_existing_doc(

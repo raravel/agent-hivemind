@@ -184,9 +184,12 @@ def test_zero_counter_is_skipped_but_still_dropped_from_global(
     assert not (data_path / "tasks" / "proj" / "_counter.json").exists()
 
 
-def test_orphan_project_without_link_dir_drops_prefix_anyway(
+def test_orphan_project_keeps_prefix_when_link_missing(
     tmp_path: Path,
 ) -> None:
+    """Without a reachable link file there is no committed home for the
+    prefix, so migration leaves it in the global config rather than
+    silently dropping it. counter still drains."""
     data_path = tmp_path / "hivemind-data"
     data_path.mkdir()
     config = data_path / ".hivemind.json"
@@ -198,6 +201,7 @@ def test_orphan_project_without_link_dir_drops_prefix_anyway(
                     "orphan": {
                         "prefix": "ORP",
                         "linked_path": str(tmp_path / "nonexistent"),
+                        "counter": 2,
                     }
                 },
             )
@@ -207,9 +211,8 @@ def test_orphan_project_without_link_dir_drops_prefix_anyway(
 
     migrate_v3_to_v4(config)
     parsed = json.loads(config.read_text(encoding="utf-8"))
-    assert parsed["projects"]["orphan"] == {
-        "linked_path": str(tmp_path / "nonexistent"),
-    }
+    assert parsed["projects"]["orphan"]["prefix"] == "ORP"
+    assert "counter" not in parsed["projects"]["orphan"]
 
 
 def test_idempotent_second_run_returns_false(tmp_path: Path) -> None:

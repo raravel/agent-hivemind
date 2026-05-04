@@ -72,6 +72,7 @@ def migrate_v3_to_v4(config_path: Path) -> bool:
             legacy_counter = proj.get("counter")
             linked_path_raw = proj.get("linked_path")
 
+            link_file: Path | None = None
             if isinstance(linked_path_raw, str) and linked_path_raw:
                 link_file = (
                     Path(linked_path_raw).expanduser() / ".hivemind-link.json"
@@ -89,7 +90,11 @@ def migrate_v3_to_v4(config_path: Path) -> bool:
                 if _seed_counter_file(counter_file, legacy_counter):
                     changed = True
 
-            if "prefix" in proj:
+            # Drop prefix from the global only when it has a safe home in
+            # the link file. Orphan entries (no linked_path or link file
+            # missing) keep prefix so re-discovery later still works.
+            prefix_safe = link_file is not None and _link_file_has_prefix(link_file)
+            if "prefix" in proj and prefix_safe:
                 proj.pop("prefix")
                 changed = True
             if "counter" in proj:
@@ -150,6 +155,20 @@ def _migrate_link_file(
         encoding="utf-8",
     )
     return True
+
+
+def _link_file_has_prefix(link_file: Path) -> bool:
+    """Return True iff the link file exists and carries a non-empty prefix."""
+    if not link_file.exists():
+        return False
+    try:
+        data = json.loads(link_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    raw = data.get("prefix")
+    return isinstance(raw, str) and bool(raw)
 
 
 def _seed_counter_file(counter_file: Path, value: int) -> bool:

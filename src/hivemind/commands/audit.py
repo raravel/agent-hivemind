@@ -16,16 +16,11 @@ STALE_DAYS = 30
 
 def _find_config() -> tuple[HivemindConfig, Path]:
     """Locate .hivemind.json and return (config, data_path)."""
-    candidates = [
-        Path.cwd() / ".hivemind.json",
-        Path("~/.hivemind.json").expanduser(),
-        Path("~/agent-hivemind-data/.hivemind.json").expanduser(),
-    ]
-    for p in candidates:
-        if p.exists():
-            cfg = HivemindConfig.load(p)
-            return cfg, cfg.data_path
-    raise click.ClickException("No .hivemind.json found. Run `hv init` first.")
+    try:
+        cfg = HivemindConfig.find_for_command()
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+    return cfg, cfg.data_path
 
 
 def _git_ls_files(linked_path: str) -> list[str]:

@@ -18,19 +18,11 @@ from hivemind.core.indexer import (
 
 
 def _resolve_data_path() -> Path:
-    """Resolve the data path from config or default."""
-    config_candidates = [
-        Path.cwd() / ".hivemind.json",
-        Path("~/.hivemind.json").expanduser(),
-        Path("~/agent-hivemind-data/.hivemind.json").expanduser(),
-    ]
-
-    for config_path in config_candidates:
-        if config_path.exists():
-            cfg = HivemindConfig.load(config_path)
-            return cfg.data_path
-
-    return Path("~/agent-hivemind-data").expanduser()
+    """Resolve the data path from the config (canonical or legacy candidate)."""
+    try:
+        return HivemindConfig.find_for_command().data_path
+    except FileNotFoundError:
+        return Path("~/agent-hivemind-data").expanduser()
 
 
 def _increment_hits(data_path: Path, doc_rel_path: str) -> int:

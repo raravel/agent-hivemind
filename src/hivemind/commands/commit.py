@@ -11,17 +11,11 @@ from hivemind.core.config import HivemindConfig
 
 
 def _resolve_data_path() -> Path:
-    """Resolve the data path from config or default."""
-    candidates = [
-        Path.cwd() / ".hivemind.json",
-        Path("~/.hivemind.json").expanduser(),
-        Path("~/agent-hivemind-data/.hivemind.json").expanduser(),
-    ]
-    for p in candidates:
-        if p.exists():
-            cfg = HivemindConfig.load(p)
-            return cfg.data_path
-    return Path("~/agent-hivemind-data").expanduser()
+    """Resolve the data path from the config (canonical or legacy candidate)."""
+    try:
+        return HivemindConfig.find_for_command().data_path
+    except FileNotFoundError:
+        return Path("~/agent-hivemind-data").expanduser()
 
 
 def _run_git(data_path: Path, *args: str) -> tuple[int, str]:

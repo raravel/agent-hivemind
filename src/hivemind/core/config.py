@@ -210,6 +210,40 @@ class HivemindConfig:
         migrate_v3_to_v4(path)
         return HivemindConfig.load(path)
 
+    @staticmethod
+    def find_for_command() -> HivemindConfig:
+        """Locate the config for a CLI command and return it loaded.
+
+        Searches ``cwd/.hivemind.json``, ``~/.hivemind.json``, and the
+        canonical ``~/agent-hivemind-data/.hivemind.json`` in that
+        order. The auto v3 → v4 migration only runs when the chosen
+        path is the canonical one — non-canonical layouts (cwd or HOME
+        root) require an explicit ``hv migrate --to v4`` to opt in,
+        which keeps v3-shaped test fixtures and one-off ad-hoc configs
+        from being rewritten on every CLI invocation. Raises
+        :class:`FileNotFoundError` when no candidate exists.
+
+        The non-canonical candidates are deprecated transitional
+        fallbacks; they will be retired once tests move to the
+        canonical layout.
+        """
+        canonical = default_config_path()
+        candidates = [
+            Path.cwd() / CONFIG_FILENAME,
+            Path("~/" + CONFIG_FILENAME).expanduser(),
+            canonical,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                if candidate.resolve() == canonical.resolve():
+                    from hivemind.core.migration import migrate_v3_to_v4
+
+                    migrate_v3_to_v4(candidate)
+                return HivemindConfig.load(candidate)
+        raise FileNotFoundError(
+            f"No {CONFIG_FILENAME} found. Run `hv init` first."
+        )
+
     def save(self) -> None:
         """Write config to path."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
