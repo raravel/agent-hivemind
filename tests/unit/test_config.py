@@ -346,6 +346,34 @@ class TestGlobalConfig:
         assert loaded.path == target_path.resolve()
         assert loaded.data_path == target_dir.resolve()
 
+    def test_load_global_auto_migrates_v3(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """load_global silently migrates a v3 config on first read."""
+        import json as _json
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        target_dir = tmp_path / "agent-hivemind-data"
+        target_dir.mkdir()
+        target_path = target_dir / ".hivemind.json"
+        target_path.write_text(
+            _json.dumps(
+                {
+                    "version": "3.0.0",
+                    "data_path": str(target_dir),
+                    "projects": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        loaded = HivemindConfig.load_global()
+        assert loaded.get("version") == "4.0.0"
+        on_disk = _json.loads(target_path.read_text(encoding="utf-8"))
+        assert on_disk["version"] == "4.0.0"
+        assert "data_path" not in on_disk
+
 
 class TestNormalizeDataPath:
     """Tests for the normalize_data_path helper."""

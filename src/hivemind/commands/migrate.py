@@ -677,6 +677,8 @@ def _detect_current_version(data_path: Path) -> str | None:
                 return "v2"
             if version == "3.0.0":
                 return "v3"
+            if version == "4.0.0":
+                return "v4"
         return "v3"
     except Exception:
         return None
@@ -686,7 +688,7 @@ def _detect_current_version(data_path: Path) -> str | None:
 @click.option(
     "--to",
     "target",
-    type=click.Choice(["v2", "v3", "v3.1"]),
+    type=click.Choice(["v2", "v3", "v3.1", "v4"]),
     default=None,
     help="Target schema version (prompts if omitted).",
 )
@@ -723,13 +725,15 @@ def migrate_cmd(
 
     if target is None:
         current = _detect_current_version(data_path)
-        choices = ["v2", "v3", "v3.1"]
+        choices = ["v2", "v3", "v3.1", "v4"]
         if current == "v1":
             default = "v2"
         elif current == "v2":
             default = "v3"
+        elif current == "v3":
+            default = "v4"
         else:
-            default = "v3.1"
+            default = "v4"
 
         target = questionary.select(
             "Select target version",
@@ -748,6 +752,20 @@ def migrate_cmd(
     if target == "v3.1":
         summary = _migrate_completed_at(data_path)
         print_completed_at_migration_summary(summary)
+        return
+
+    if target == "v4":
+        from hivemind.core.migration import migrate_v3_to_v4
+
+        config_path = data_path / ".hivemind.json"
+        if not config_path.exists():
+            raise click.ClickException(
+                f"No config at {config_path}. Run `hv init` first."
+            )
+        if migrate_v3_to_v4(config_path):
+            click.echo(f"Migrated {config_path} to v4.")
+        else:
+            click.echo("Already on v4. Nothing to do.")
         return
 
     # target == "v3"

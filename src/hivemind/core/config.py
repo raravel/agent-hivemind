@@ -192,15 +192,22 @@ class HivemindConfig:
     def load_global() -> HivemindConfig:
         """Load the global config from the canonical location.
 
-        Raises :class:`FileNotFoundError` when the config does not exist.
-        CLI commands should translate this into a user-facing error
-        pointing at ``hv init``.
+        Triggers an idempotent v3 → v4 migration on first read after
+        upgrade so existing installations stay functional without
+        requiring an explicit ``hv migrate --to v4`` step. Raises
+        :class:`FileNotFoundError` when the config does not exist; CLI
+        commands should translate this into a user-facing error pointing
+        at ``hv init``.
         """
         path = default_config_path()
         if not path.exists():
             raise FileNotFoundError(
                 f"No hivemind config at {path}. Run `hv init` first."
             )
+        # Local import: core.migration depends on core.config helpers.
+        from hivemind.core.migration import migrate_v3_to_v4
+
+        migrate_v3_to_v4(path)
         return HivemindConfig.load(path)
 
     def save(self) -> None:
