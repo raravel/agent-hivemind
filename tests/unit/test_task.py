@@ -78,9 +78,13 @@ class TestCreate:
         assert result.exit_code == 0, result.output
         assert "MP-001" in result.output
 
-        # Counter should be 1 now in config
+        counter_file = data_path / "tasks" / "myproj" / "_counter.json"
+        assert counter_file.exists()
+        assert json.loads(counter_file.read_text(encoding="utf-8"))["value"] == 1
+
+        # Legacy global-config counter is no longer the SSOT — left untouched.
         cfg_data = json.loads(config_path.read_text(encoding="utf-8"))
-        assert cfg_data["projects"]["myproj"]["counter"] == 1
+        assert cfg_data["projects"]["myproj"]["counter"] == 0
 
         # Create a second task
         result2 = _invoke(
@@ -90,8 +94,9 @@ class TestCreate:
         assert result2.exit_code == 0, result2.output
         assert "MP-002" in result2.output
 
+        assert json.loads(counter_file.read_text(encoding="utf-8"))["value"] == 2
         cfg_data2 = json.loads(config_path.read_text(encoding="utf-8"))
-        assert cfg_data2["projects"]["myproj"]["counter"] == 2
+        assert cfg_data2["projects"]["myproj"]["counter"] == 0
 
     def test_generates_correct_frontmatter(self, tmp_path: Path) -> None:
         config_path, data_path = _make_workspace(tmp_path)

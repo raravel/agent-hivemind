@@ -12,6 +12,7 @@ from typing import Any
 import click
 
 from hivemind.core.config import HivemindConfig
+from hivemind.core.counter import next_task_id
 from hivemind.core.git import auto_commit
 from hivemind.core.parser import (
     create_task_file,
@@ -574,10 +575,13 @@ def create(
     _validate_parent_hierarchy(task_type, parent_id, all_tasks)
 
     prefix: str = proj_cfg.get("prefix", project.upper())
-    counter: int = proj_cfg.get("counter", 0)
-    counter += 1
-
-    task_id = f"{prefix}-{counter:03d}"
+    legacy_counter = int(proj_cfg.get("counter", 0) or 0)
+    task_id = next_task_id(
+        data_path,
+        project,
+        prefix,
+        legacy_counter=legacy_counter,
+    )
     today = date.today().isoformat()
 
     fm: dict[str, object] = {
@@ -599,10 +603,6 @@ def create(
 
     # Update task index
     _update_task_index_entry(data_path, project, task_id, fm)
-
-    # Update counter in config
-    cfg.set(f"projects.{project}.counter", counter)
-    cfg.save()
 
     auto_commit(data_path, f"task: create {task_id}")
 
