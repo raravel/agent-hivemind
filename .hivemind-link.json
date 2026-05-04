@@ -2,6 +2,7 @@
   "project": "agent-hivemind",
   "data_path": "~/agent-hivemind-data",
   "targets": [
+    "claude",
     "codex"
   ]
 }
