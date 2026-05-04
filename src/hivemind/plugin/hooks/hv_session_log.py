@@ -39,13 +39,34 @@ def _read_input() -> dict[str, object] | None:
         return None
 
 
-def _resolve_data_path(raw: str) -> Path | None:
-    """Resolve a stored data_path, skipping Windows-style paths on POSIX."""
-    if not raw:
-        return None
-    if sys.platform != "win32" and len(raw) >= 2 and raw[1] == ":" and raw[0].isalpha():
-        return Path("~/agent-hivemind-data").expanduser()
-    return Path(raw).expanduser()
+def _resolve_data_path() -> Path:
+    """Resolve the hivemind data directory.
+
+    Under v4 the data dir is the parent of the canonical global config
+    file (``~/agent-hivemind-data``). A legacy v3 ``data_path`` field is
+    honoured if still present so a freshly-upgraded install keeps
+    logging until ``hv migrate --to v4`` rewrites the file.
+    """
+    canonical = Path("~/agent-hivemind-data/.hivemind.json").expanduser()
+    default = canonical.parent
+    if not canonical.exists():
+        return default
+    try:
+        cfg = json.loads(canonical.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+    if isinstance(cfg, dict):
+        legacy = cfg.get("data_path")
+        if isinstance(legacy, str) and legacy:
+            if (
+                sys.platform != "win32"
+                and len(legacy) >= 2
+                and legacy[1] == ":"
+                and legacy[0].isalpha()
+            ):
+                return default
+            return Path(legacy).expanduser()
+    return default
 
 
 def _read_tail(path: Path, max_bytes: int = 65536) -> str:
@@ -132,10 +153,10 @@ def main() -> None:
         return
 
     project = link.get("project")
-    data_path = _resolve_data_path(str(link.get("data_path", "")))
-    if not project or data_path is None:
+    if not project:
         _approve()
         return
+    data_path = _resolve_data_path()
 
     today = datetime.now().strftime("%Y%m%d")
     short_id = session_id[:8]

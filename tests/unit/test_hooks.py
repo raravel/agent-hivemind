@@ -55,8 +55,20 @@ def _run_hook(
     script: Path,
     input_data: dict[str, Any],
     cwd: str | None = None,
+    home: Path | None = None,
 ) -> dict[str, Any]:
-    """Run a Python hook with JSON on stdin; return parsed stdout."""
+    """Run a Python hook with JSON on stdin; return parsed stdout.
+
+    *home* redirects ``~`` resolution inside the subprocess so the hook
+    sees a controlled canonical-config location instead of the
+    developer's real home.
+    """
+    import os
+
+    env = os.environ.copy()
+    if home is not None:
+        env["HOME"] = str(home)
+        env["USERPROFILE"] = str(home)
     result = subprocess.run(
         [sys.executable, str(script)],
         input=json.dumps(input_data),
@@ -64,11 +76,23 @@ def _run_hook(
         text=True,
         timeout=10,
         cwd=cwd,
+        env=env,
     )
     assert (
         result.returncode == 0
     ), f"Hook exited with {result.returncode}: {result.stderr}"
     return json.loads(result.stdout)  # type: ignore[no-any-return]
+
+
+def _setup_canonical_data_path(home: Path) -> Path:
+    """Materialize a canonical ~/agent-hivemind-data layout under *home*."""
+    data_path = home / "agent-hivemind-data"
+    data_path.mkdir(parents=True, exist_ok=True)
+    (data_path / ".hivemind.json").write_text(
+        json.dumps({"version": "4.0.0", "projects": {}}),
+        encoding="utf-8",
+    )
+    return data_path
 
 
 class TestHookLogic:
@@ -212,10 +236,11 @@ class TestSessionLogHook:
         assert out["status"] == "approve"
 
     def test_stop_event_writes_l3(self, tmp_path: Path) -> None:
-        data_path = tmp_path / "data"
-        data_path.mkdir()
-        (tmp_path / ".hivemind-link.json").write_text(
-            json.dumps({"project": "demo", "data_path": str(data_path)}),
+        data_path = _setup_canonical_data_path(tmp_path)
+        project_dir = tmp_path / "myproj"
+        project_dir.mkdir()
+        (project_dir / ".hivemind-link.json").write_text(
+            json.dumps({"project": "demo", "prefix": "DEM"}),
             encoding="utf-8",
         )
 
@@ -224,10 +249,11 @@ class TestSessionLogHook:
             {
                 "hook_event_name": "Stop",
                 "session_id": "abcdef1234567890",
-                "cwd": str(tmp_path),
+                "cwd": str(project_dir),
                 "last_assistant_message": "Here is my final answer.",
             },
-            cwd=str(tmp_path),
+            cwd=str(project_dir),
+            home=tmp_path,
         )
         assert out["status"] == "approve"
 
@@ -240,10 +266,11 @@ class TestSessionLogHook:
         assert "Here is my final answer." in content
 
     def test_user_prompt_submit_writes_l3(self, tmp_path: Path) -> None:
-        data_path = tmp_path / "data"
-        data_path.mkdir()
-        (tmp_path / ".hivemind-link.json").write_text(
-            json.dumps({"project": "demo", "data_path": str(data_path), "targets": ["codex"]}),
+        data_path = _setup_canonical_data_path(tmp_path)
+        project_dir = tmp_path / "myproj"
+        project_dir.mkdir()
+        (project_dir / ".hivemind-link.json").write_text(
+            json.dumps({"project": "demo", "prefix": "DEM"}),
             encoding="utf-8",
         )
 
@@ -252,10 +279,11 @@ class TestSessionLogHook:
             {
                 "hook_event_name": "UserPromptSubmit",
                 "session_id": "abcdef1234567890",
-                "cwd": str(tmp_path),
+                "cwd": str(project_dir),
                 "user_prompt": "please implement the next task",
             },
-            cwd=str(tmp_path),
+            cwd=str(project_dir),
+            home=tmp_path,
         )
         assert out["status"] == "approve"
 
@@ -266,29 +294,43 @@ class TestSessionLogHook:
         assert "please implement the next task" in content
 
     def test_windows_path_fallback(self, tmp_path: Path) -> None:
-        """Windows-style path on POSIX falls back to default location."""
+        """Windows-style data_path in legacy global config falls back on POSIX."""
         if sys.platform == "win32":
             pytest.skip("not applicable on Windows")
-        (tmp_path / ".hivemind-link.json").write_text(
+
+        data_path = _setup_canonical_data_path(tmp_path)
+        # Replace the canonical config with a v3-shaped one that points
+        # at a foreign Windows path; hook should ignore it and write
+        # under the canonical default instead.
+        (data_path / ".hivemind.json").write_text(
             json.dumps(
                 {
-                    "project": "demo",
+                    "version": "3.0.0",
                     "data_path": "C:\\Users\\foreign\\agent-hivemind-data",
+                    "projects": {},
                 }
             ),
             encoding="utf-8",
         )
+        project_dir = tmp_path / "myproj"
+        project_dir.mkdir()
+        (project_dir / ".hivemind-link.json").write_text(
+            json.dumps({"project": "demo", "prefix": "DEM"}),
+            encoding="utf-8",
+        )
+
         out = _run_hook(
             _SESSION_LOG,
             {
                 "hook_event_name": "Stop",
                 "session_id": "win-test-001",
-                "cwd": str(tmp_path),
+                "cwd": str(project_dir),
                 "last_assistant_message": "ok",
             },
-            cwd=str(tmp_path),
+            cwd=str(project_dir),
+            home=tmp_path,
         )
         assert out["status"] == "approve"
-        # Falls back to ~/agent-hivemind-data; we don't assert the write
-        # location (it would pollute the user's real data dir in CI), only
-        # that the hook did not crash.
+        # Hook fell back to canonical ~/agent-hivemind-data (= tmp_path/agent-hivemind-data)
+        log_dir = data_path / "level3" / "demo"
+        assert log_dir.exists()

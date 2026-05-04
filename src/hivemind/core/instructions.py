@@ -38,14 +38,19 @@ def replace_managed_block(existing: str, block: str) -> str:
 
 
 def build_agents_block(*, project: str, data_path: str, targets: list[str]) -> str:
-    """Build the managed AGENTS.md content block."""
+    """Build the managed AGENTS.md content block.
+
+    The block now carries only the project name. ``data_path`` is still
+    accepted to anchor the spec @-import paths but is no longer printed
+    as a metadata line — it lives in the global config under v4. The
+    ``targets`` argument is accepted for API stability but unused; the
+    runtime reads ``runtime.enabled_targets`` from the global config.
+    """
+    del targets  # rendered targets line removed in v4
     project_spec_root = f"{data_path}/projects/{project}"
-    targets_text = ", ".join(targets)
     return (
         "# Hivemind Project\n"
-        f"- project: {project}\n"
-        f"- data_path: {data_path}\n"
-        f"- targets: {targets_text}\n\n"
+        f"- project: {project}\n\n"
         "When planning or executing tracked work, consult the linked hivemind "
         "project docs under:\n"
         f"- {project_spec_root}/\n\n"
@@ -59,14 +64,15 @@ def build_agents_block(*, project: str, data_path: str, targets: list[str]) -> s
 
 
 def build_claude_block(*, project: str, data_path: str, targets: list[str]) -> str:
-    """Build the managed CLAUDE.md import block."""
+    """Build the managed CLAUDE.md import block.
+
+    See :func:`build_agents_block` — the same v4 cleanup applies here.
+    """
+    del targets
     project_spec_root = f"{data_path}/projects/{project}"
-    targets_text = ", ".join(targets)
     return (
         "# Hivemind Project\n"
-        f"- project: {project}\n"
-        f"- data_path: {data_path}\n"
-        f"- targets: {targets_text}\n\n"
+        f"- project: {project}\n\n"
         "@AGENTS.md\n"
         f"@{project_spec_root}/architecture.md\n"
         f"@{project_spec_root}/rules.md\n"
