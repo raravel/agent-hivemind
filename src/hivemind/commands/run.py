@@ -85,8 +85,12 @@ def _find_next_pending(
     data_path: Path,
     project: str | None,
 ) -> tuple[dict[str, object], str, Path] | None:
-    """Find the next pending task with resolved deps, sorted by priority."""
-    ready = _find_ready_tasks(data_path, project, leaf_only=False)
+    """Find the next pending leaf task with resolved deps, sorted by priority.
+
+    Epics and stories are containers, not implementation targets, so they are
+    excluded — auto-detect always drills down to leaves.
+    """
+    ready = _find_ready_tasks(data_path, project, leaf_only=True)
     return ready[0] if ready else None
 
 

@@ -141,6 +141,56 @@ class TestFallbackToNextPending:
         assert "Task B" in result2.output
 
 
+class TestSkipsContainers:
+    """Auto-detect must drill past epic/story to a leaf task."""
+
+    def test_skips_epic_for_leaf_descendant(self, tmp_path: Path) -> None:
+        _make_workspace(tmp_path)
+        # Build epic -> story -> task hierarchy. Epic is created first, so
+        # without leaf-filtering it would sort ahead and be returned.
+        _invoke_task(
+            tmp_path, ["create", "-p", "myproj", "-t", "Big epic", "--type", "epic"]
+        )
+        _invoke_task(
+            tmp_path,
+            [
+                "create", "-p", "myproj", "-t", "Story 1",
+                "--type", "story", "--parent", "MP-001",
+            ],
+        )
+        _invoke_task(
+            tmp_path,
+            [
+                "create", "-p", "myproj", "-t", "Leaf work",
+                "--type", "task", "--parent", "MP-002",
+            ],
+        )
+
+        result = _invoke_run(tmp_path, ["--format", "json"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["frontmatter"]["type"] == "task"
+        assert data["id"] == "MP-003"
+
+    def test_no_leaf_returns_no_tasks(self, tmp_path: Path) -> None:
+        _make_workspace(tmp_path)
+        # Only an epic and a story — no leaf. Expect "No tasks available".
+        _invoke_task(
+            tmp_path, ["create", "-p", "myproj", "-t", "Lone epic", "--type", "epic"]
+        )
+        _invoke_task(
+            tmp_path,
+            [
+                "create", "-p", "myproj", "-t", "Lone story",
+                "--type", "story", "--parent", "MP-001",
+            ],
+        )
+
+        result = _invoke_run(tmp_path, [])
+        assert result.exit_code == 1
+        assert "No tasks available" in result.output
+
+
 class TestFormatJson:
     """Tests for --format json output structure."""
 
