@@ -12,10 +12,11 @@ import click
 from hivemind.commands.task import (
     PRIORITY_ORDER,
     _LEAF_TYPES,
+    _effective_type,
     _find_config,
+    _find_project_by_cwd,
     _find_task_file,
     _scan_tasks,
-    _effective_type,
 )
 from hivemind.core.parser import parse_task
 
@@ -162,6 +163,13 @@ def _output_tasks_array(
     help="With --ready-only, cap the number of tasks returned.",
 )
 @click.option(
+    "--all-projects",
+    "all_projects",
+    is_flag=True,
+    default=False,
+    help="Scan tasks from all projects (default: auto-detect current project).",
+)
+@click.option(
     "--format",
     "fmt",
     default="text",
@@ -173,10 +181,11 @@ def run(
     task_id: Optional[str],
     ready_only: bool,
     limit: Optional[int],
+    all_projects: bool,
     fmt: str,
 ) -> None:
     """Fetch task content for the run-task pipeline."""
-    _cfg, data_path = _find_config()
+    cfg, data_path = _find_config()
 
     if task_id is not None:
         task_path = _find_task_file(data_path, task_id)
@@ -184,8 +193,22 @@ def run(
         _output_task(fm, body, task_path, fmt)
         return
 
+    if all_projects:
+        scan_project: str | None = None
+    elif project:
+        scan_project = project
+    else:
+        detected = _find_project_by_cwd(cfg)
+        if detected:
+            scan_project = detected
+        else:
+            raise click.ClickException(
+                "No project linked to current directory. "
+                "Use --project/-p to specify, or --all-projects to scan all."
+            )
+
     if ready_only:
-        ready = _find_ready_tasks(data_path, project, leaf_only=True)
+        ready = _find_ready_tasks(data_path, scan_project, leaf_only=True)
         if limit is not None and limit > 0:
             ready = ready[:limit]
         if not ready:
@@ -198,14 +221,14 @@ def run(
         return
 
     # Auto-detect: first look for in_progress
-    result = _find_in_progress(data_path, project)
+    result = _find_in_progress(data_path, scan_project)
     if result is not None:
         fm, body, path = result
         _output_task(fm, body, path, fmt)
         return
 
     # Fallback to next pending
-    result = _find_next_pending(data_path, project)
+    result = _find_next_pending(data_path, scan_project)
     if result is not None:
         fm, body, path = result
         _output_task(fm, body, path, fmt)

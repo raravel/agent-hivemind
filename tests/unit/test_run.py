@@ -26,7 +26,7 @@ def _make_workspace(
         projects = {
             "myproj": {
                 "prefix": "MP",
-                "linked_path": "/tmp/myproj",
+                "linked_path": str(tmp_path),
                 "counter": 0,
             }
         }
@@ -291,3 +291,95 @@ class TestReadyOnly:
         result = _invoke_run(tmp_path, ["--ready-only", "--format", "json"])
         assert result.exit_code == 1
         assert result.output.strip() == "[]"
+
+
+class TestProjectAutoDetect:
+    """Tests for cwd-based project auto-detection (mirrors `hv task list`)."""
+
+    def test_filters_to_cwd_project_by_default(self, tmp_path: Path) -> None:
+        # Two projects: only 'myproj' is linked to cwd. Tasks created in
+        # 'other' must NOT be returned when running from cwd.
+        _make_workspace(
+            tmp_path,
+            projects={
+                "myproj": {
+                    "prefix": "MP",
+                    "linked_path": str(tmp_path),
+                    "counter": 0,
+                },
+                "other": {
+                    "prefix": "OT",
+                    "linked_path": "/tmp/other",
+                    "counter": 0,
+                },
+            },
+        )
+        _invoke_task(tmp_path, ["create", "-p", "other", "-t", "Other task", "--priority", "high"])
+        _invoke_task(tmp_path, ["create", "-p", "myproj", "-t", "My task", "--priority", "low"])
+
+        result = _invoke_run(tmp_path, [])
+        assert result.exit_code == 0, result.output
+        # cwd is linked to 'myproj' so 'My task' wins despite lower priority
+        assert "My task" in result.output
+        assert "Other task" not in result.output
+
+    def test_errors_when_cwd_not_linked(self, tmp_path: Path) -> None:
+        _make_workspace(
+            tmp_path,
+            projects={
+                "myproj": {
+                    "prefix": "MP",
+                    "linked_path": "/tmp/elsewhere",
+                    "counter": 0,
+                }
+            },
+        )
+        result = _invoke_run(tmp_path, [])
+        assert result.exit_code != 0
+        assert "No project linked to current directory" in result.output
+
+    def test_all_projects_flag_scans_everything(self, tmp_path: Path) -> None:
+        _make_workspace(
+            tmp_path,
+            projects={
+                "myproj": {
+                    "prefix": "MP",
+                    "linked_path": "/tmp/elsewhere",
+                    "counter": 0,
+                },
+                "other": {
+                    "prefix": "OT",
+                    "linked_path": "/tmp/other",
+                    "counter": 0,
+                },
+            },
+        )
+        _invoke_task(tmp_path, ["create", "-p", "myproj", "-t", "Cross-project task"])
+
+        result = _invoke_run(tmp_path, ["--all-projects"])
+        assert result.exit_code == 0, result.output
+        assert "Cross-project task" in result.output
+
+    def test_explicit_project_overrides_cwd(self, tmp_path: Path) -> None:
+        _make_workspace(
+            tmp_path,
+            projects={
+                "myproj": {
+                    "prefix": "MP",
+                    "linked_path": str(tmp_path),
+                    "counter": 0,
+                },
+                "other": {
+                    "prefix": "OT",
+                    "linked_path": "/tmp/other",
+                    "counter": 0,
+                },
+            },
+        )
+        _invoke_task(tmp_path, ["create", "-p", "myproj", "-t", "Mine"])
+        _invoke_task(tmp_path, ["create", "-p", "other", "-t", "Theirs"])
+
+        result = _invoke_run(tmp_path, ["--project", "other"])
+        assert result.exit_code == 0, result.output
+        assert "Theirs" in result.output
+        assert "Mine" not in result.output
