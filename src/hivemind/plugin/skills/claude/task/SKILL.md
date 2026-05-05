@@ -62,9 +62,9 @@ hv task update <TASK-ID> --status in_progress
 ### 3. Load model profile + pricing
 
 ```bash
-hv config model_profile
-hv config profiles.<profile_name>
-hv config pricing
+hv config model_profile --target claude
+hv config profiles.<profile_name> --target claude
+hv config pricing --target claude
 ```
 
 Profile returns `{planner, executor, reviewer}` with concrete model IDs
@@ -395,8 +395,8 @@ Record incident in report, proceed to next task (do NOT stop the pipeline).
 - **NEVER let a worker mark a task as done.** Only you do this, and only after merge.
 - **ALWAYS** use `hv run --format json` (sequential) or `hv run --ready-only --limit N` (parallel) for structured task data.
 - **ALWAYS** mark task `in_progress` before starting work.
-- **ALWAYS** use the model IDs from `hv config profiles.<profile>`. Do NOT hardcode.
+- **ALWAYS** use the model IDs from `hv config profiles.<profile> --target claude`. Do NOT hardcode.
 - **ALWAYS** use **SendMessage** to continue a worker (preserves worktree + context).
-- **ALWAYS** estimate tokens and compute cost for the report. Use `hv config pricing`.
+- **ALWAYS** estimate tokens and compute cost for the report. Use `hv config pricing --target claude`.
 - **ALWAYS** run `hv` CLI commands via the Bash tool.
 - **NEVER** write reports or feedback in Korean. English only for BM25 consistency.

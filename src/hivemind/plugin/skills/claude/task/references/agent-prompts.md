@@ -155,9 +155,9 @@ The model for each role is determined by the active profile in `.hivemind.json`:
 | budget    | sonnet  | sonnet                   | haiku                    |
 
 ```bash
-hv config model_profile              # check current
-hv config profiles.<profile_name>    # see model assignments
-hv config --profile quality          # change profile
+hv config model_profile --target claude              # check current
+hv config profiles.<profile_name> --target claude    # see model assignments
+hv config --profile quality --target claude          # change profile
 ```
 
 ## SendMessage for Retries

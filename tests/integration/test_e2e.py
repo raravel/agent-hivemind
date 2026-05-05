@@ -577,23 +577,43 @@ class TestConfigFlow:
             "hivemind.commands.config_cmd._resolve_config_path",
             return_value=config_path,
         ):
-            # Get current model_profile
+            # Get current model_profile (both providers)
             result = _invoke(["config", "model_profile"], cwd=data_path)
             assert result.exit_code == 0, result.output
+            assert "[claude]" in result.output
+            assert "[codex]" in result.output
             assert "balanced" in result.output
 
-            # Set model_profile to quality
+            # Set model_profile to quality for claude only
             result = _invoke(
-                ["config", "model_profile", "quality"],
+                ["config", "model_profile", "quality", "--target", "claude"],
                 cwd=data_path,
             )
             assert result.exit_code == 0, result.output
             assert "quality" in result.output
 
-            # Verify persisted
-            result = _invoke(["config", "model_profile"], cwd=data_path)
+            # Verify persisted: claude=quality, codex untouched
+            result = _invoke(
+                ["config", "model_profile", "--target", "claude"],
+                cwd=data_path,
+            )
             assert result.exit_code == 0
-            assert "quality" in result.output
+            assert result.output.strip() == "quality"
+
+            result = _invoke(
+                ["config", "model_profile", "--target", "codex"],
+                cwd=data_path,
+            )
+            assert result.exit_code == 0
+            assert result.output.strip() == "balanced"
+
+            # Setting without --target must error
+            result = _invoke(
+                ["config", "model_profile", "budget"],
+                cwd=data_path,
+            )
+            assert result.exit_code != 0
+            assert "--target" in result.output
 
     def test_config_dump_full(self, tmp_path: Path) -> None:
         data_path = tmp_path / "hv-data"

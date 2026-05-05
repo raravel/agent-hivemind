@@ -10,6 +10,12 @@ import click
 
 from hivemind.core.config import HivemindConfig
 
+_RUNTIME_TARGETS: tuple[str, ...] = ("claude", "codex")
+_RUNTIME_AWARE_PREFIXES: tuple[str, ...] = ("profiles.", "pricing.")
+_RUNTIME_AWARE_KEYS: frozenset[str] = frozenset(
+    {"profiles", "pricing", "model_profile"}
+)
+
 
 def _resolve_config_path() -> Path:
     """Find .hivemind.json at the canonical v4 location."""
@@ -65,54 +71,82 @@ def _walk_nested(value: Any, parts: list[str]) -> Any:
     return current
 
 
-def _get_effective_value(cfg: HivemindConfig, key: str) -> Any:
-    """Get a config value with runtime-aware aliases for model settings."""
-    if key == "data_path":
-        # v4: data_path is derived from the config file's parent dir,
-        # not stored as a JSON field. Surface it via the property so
-        # callers (skills, scripts) can rely on `hv config data_path`.
-        return str(cfg.data_path)
+def _is_runtime_aware(key: str) -> bool:
+    """Whether a config key is per-provider (claude/codex)."""
+    if key in _RUNTIME_AWARE_KEYS:
+        return True
+    return any(key.startswith(prefix) for prefix in _RUNTIME_AWARE_PREFIXES)
+
+
+def _get_for_target(cfg: HivemindConfig, key: str, target: str) -> Any:
+    """Read a runtime-aware value scoped to a specific target."""
     if key == "model_profile":
-        return cfg.runtime_model_profile()
+        return cfg.runtime_model_profile(target)
     if key == "profiles":
-        return cfg.runtime_profiles()
+        return cfg.runtime_profiles(target)
     if key.startswith("profiles."):
-        return _walk_nested(cfg.runtime_profiles(), key.split(".")[1:])
+        return _walk_nested(cfg.runtime_profiles(target), key.split(".")[1:])
     if key == "pricing":
-        return cfg.runtime_pricing()
+        return cfg.runtime_pricing(target)
     if key.startswith("pricing."):
-        return _walk_nested(cfg.runtime_pricing(), key.split(".")[1:])
+        return _walk_nested(cfg.runtime_pricing(target), key.split(".")[1:])
     return cfg.get(key)
 
 
-def _set_effective_value(cfg: HivemindConfig, key: str, value: Any) -> None:
-    """Set a config value with runtime-aware aliases for model settings."""
+def _set_for_target(
+    cfg: HivemindConfig, key: str, value: Any, target: str
+) -> None:
+    """Write a runtime-aware value scoped to a specific target."""
     if key == "model_profile":
-        cfg.set_runtime_model_profile(str(value))
+        cfg.set_runtime_model_profile(str(value), target=target)
         return
     if key == "profiles":
         if not isinstance(value, dict):
             raise click.ClickException("profiles must be a JSON object")
-        cfg.set_runtime_profiles(value)
+        cfg.set_runtime_profiles(value, target=target)
         return
     if key.startswith("profiles."):
         cfg.ensure_runtime_models()
-        cfg.set(f"runtime_models.{cfg.default_target}.{key}", value)
-        if cfg.default_target == "claude":
+        cfg.set(f"runtime_models.{target}.{key}", value)
+        if target == "claude":
             cfg.set(key, value)
         return
     if key == "pricing":
         if not isinstance(value, dict):
             raise click.ClickException("pricing must be a JSON object")
-        cfg.set_runtime_pricing(value)
+        cfg.set_runtime_pricing(value, target=target)
         return
     if key.startswith("pricing."):
         cfg.ensure_runtime_models()
-        cfg.set(f"runtime_models.{cfg.default_target}.{key}", value)
-        if cfg.default_target == "claude":
+        cfg.set(f"runtime_models.{target}.{key}", value)
+        if target == "claude":
             cfg.set(key, value)
         return
     cfg.set(key, value)
+
+
+def _format_both_targets(
+    cfg: HivemindConfig, key: str, fmt: str
+) -> tuple[str, bool]:
+    """Render a runtime-aware key for all providers.
+
+    Returns ``(rendered_text, any_value_found)``. ``any_value_found`` is
+    False when neither runtime has the key set.
+    """
+    values: dict[str, Any] = {
+        target: _get_for_target(cfg, key, target) for target in _RUNTIME_TARGETS
+    }
+    any_value = any(v is not None for v in values.values())
+
+    if fmt == "json":
+        return json.dumps(values, indent=2, ensure_ascii=False), any_value
+
+    sections: list[str] = []
+    for target in _RUNTIME_TARGETS:
+        v = values[target]
+        body = _format_value(v) if v is not None else "(not set)"
+        sections.append(f"[{target}]\n{body}")
+    return "\n\n".join(sections), any_value
 
 
 @click.command("config")
@@ -121,47 +155,96 @@ def _set_effective_value(cfg: HivemindConfig, key: str, value: Any) -> None:
 @click.option(
     "--profile",
     default=None,
-    help="Shortcut to set model_profile.",
+    help="Shortcut to set model_profile (requires --target).",
+)
+@click.option(
+    "--target",
+    type=click.Choice(list(_RUNTIME_TARGETS)),
+    default=None,
+    help="Runtime target for runtime-aware keys (profiles, pricing, model_profile).",
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="Output format when reading runtime-aware keys without --target.",
 )
 def config_cmd(
     key: Optional[str],
     value: Optional[str],
     profile: Optional[str],
+    target: Optional[str],
+    fmt: str,
 ) -> None:
     """View or set configuration values.
 
     \b
+    Runtime-aware keys (profiles.*, pricing.*, model_profile) are
+    stored per provider (claude/codex). Reads without --target print
+    both providers as labeled sections. Writes always require --target.
+
+    \b
     Examples:
-      hv config                          # print full config
-      hv config model_profile            # print one value
-      hv config profiles.balanced        # dot-notation access
-      hv config git_enabled true         # set a value
-      hv config --profile quality        # shortcut for model_profile
+      hv config                                       # full config (JSON)
+      hv config profiles.balanced                     # both providers
+      hv config profiles.balanced --target codex      # one provider
+      hv config profiles.balanced --format json       # both, JSON map
+      hv config model_profile quality --target codex  # set per provider
+      hv config git_enabled true                      # non-runtime keys
+      hv config --profile quality --target claude     # shortcut
     """
     cfg = _load_config()
 
-    # --profile shortcut
+    # --profile shortcut: requires --target.
     if profile is not None:
-        cfg.set_runtime_model_profile(profile)
+        if target is None:
+            raise click.ClickException(
+                "--profile requires --target {claude|codex}"
+            )
+        cfg.set_runtime_model_profile(profile, target=target)
         cfg.save()
-        click.echo(f"model_profile = {profile}")
+        click.echo(f"[{target}] model_profile = {profile}")
         return
 
-    # No args: dump full config
+    # No args: dump full config.
     if key is None:
         click.echo(json.dumps(cfg.raw, indent=2, ensure_ascii=False))
         return
 
-    # Key only: get value
+    runtime_aware = _is_runtime_aware(key)
+
+    # Read.
     if value is None:
-        result = _get_effective_value(cfg, key)
+        if runtime_aware and target is None:
+            rendered, any_value = _format_both_targets(cfg, key, fmt)
+            if not any_value:
+                raise click.ClickException(f"Key not found: {key}")
+            click.echo(rendered)
+            return
+
+        if runtime_aware:
+            result = _get_for_target(cfg, key, target)  # type: ignore[arg-type]
+        else:
+            result = cfg.get(key)
         if result is None:
             raise click.ClickException(f"Key not found: {key}")
         click.echo(_format_value(result))
         return
 
-    # Key + value: set
+    # Write.
     parsed = _parse_value(value)
-    _set_effective_value(cfg, key, parsed)
+    if runtime_aware:
+        if target is None:
+            raise click.ClickException(
+                f"Setting '{key}' requires --target {{claude|codex}}"
+            )
+        _set_for_target(cfg, key, parsed, target)
+        cfg.save()
+        click.echo(f"[{target}] {key} = {_format_value(parsed)}")
+        return
+
+    cfg.set(key, parsed)
     cfg.save()
     click.echo(f"{key} = {_format_value(parsed)}")
