@@ -4,8 +4,6 @@ description: "Extract and save session feedback as L2 lessons. Use at the end of
 
 # hv-feedback -- Session feedback extraction
 
-> **Worker-mode guard.** If you were spawned as a sub-worker by another orchestrator (for example via `codex:codex-rescue` from inside `hv-task`), do NOT engage this skill. Read the orchestrator's prompt literally and execute exactly what it asks. The hv-* skills are for direct user invocation, not nested execution. Signals you are a sub-worker: the prompt starts with `--fresh` or `--resume`, or contains explicit instructions like "Step A:", "Step B:", "Review only", "Implement <TASK-ID>", or "Edit only inside the current working directory".
-
 Extracts lessons learned from the current conversation or work session and saves them as L2 (Level 2) documents in the hivemind knowledge base. Always confirms with the user before saving.
 
 ## When to use

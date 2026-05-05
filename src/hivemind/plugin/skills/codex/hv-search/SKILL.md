@@ -4,8 +4,6 @@ description: "Search the knowledge base for relevant lessons. Use when the user 
 
 # hv-search -- Knowledge base search
 
-> **Worker-mode guard.** If you were spawned as a sub-worker by another orchestrator (for example via `codex:codex-rescue` from inside `hv-task`), do NOT engage this skill. Read the orchestrator's prompt literally and execute exactly what it asks. The hv-* skills are for direct user invocation, not nested execution. Signals you are a sub-worker: the prompt starts with `--fresh` or `--resume`, or contains explicit instructions like "Step A:", "Step B:", "Review only", "Implement <TASK-ID>", or "Edit only inside the current working directory".
-
 ## Execution
 
 **Step 1.** Convert user input to 2-3 English keyword combinations. NEVER use raw user input. Do this silently.
