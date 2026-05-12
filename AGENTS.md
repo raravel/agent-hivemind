@@ -3,7 +3,7 @@
 - project: agent-hivemind
 
 When planning or executing tracked work, consult the linked hivemind project docs under:
-- ~/agent-hivemind-data/projects/agent-hivemind/
+- hivemind/docs/
 
 Prioritize these files when they exist:
 - architecture.md

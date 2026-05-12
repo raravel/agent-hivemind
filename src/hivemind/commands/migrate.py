@@ -722,8 +722,15 @@ def _move_dir_contents(src_dir: Path, dst_dir: Path, repo: Path | None) -> int:
     return moved
 
 
-def migrate_v4_to_v5(data_path: Path) -> dict[str, Any]:
+def migrate_v4_to_v5(
+    data_path: Path, only_projects: list[str] | None = None
+) -> dict[str, Any]:
     """Move project-local artifacts from the data dir to each linked repo.
+
+    When *only_projects* is given, restrict the move to those project names;
+    the schema version is bumped only when no filter is active (running on a
+    subset leaves the version alone — the data dir may still hold legacy
+    layouts for the rest).
 
     For every registered project with a valid ``linked_path``:
       - ``<data>/projects/<name>/*`` -> ``<linked>/hivemind/docs/``
@@ -757,7 +764,11 @@ def migrate_v4_to_v5(data_path: Path) -> dict[str, Any]:
     if not isinstance(projects, dict):
         projects = {}
 
+    only = set(only_projects) if only_projects else None
+
     for name, proj in projects.items():
+        if only is not None and name not in only:
+            continue
         if not isinstance(proj, dict):
             continue
         linked_raw = proj.get("linked_path")
@@ -815,8 +826,12 @@ def migrate_v4_to_v5(data_path: Path) -> dict[str, Any]:
                 project_summary["link_file_moved"] = True
 
         # 4. Refresh CLAUDE.md / AGENTS.md (relative @hivemind/... imports).
+        # Pre-existing files imply both targets are in play; the function
+        # silently no-ops on whichever file is absent.
         try:
-            refreshed = write_instruction_files(linked, project=name)
+            refreshed = write_instruction_files(
+                linked, project=name, targets=["claude", "codex"]
+            )
             project_summary["instructions_refreshed"] = sorted(refreshed)
         except Exception as exc:  # noqa: BLE001
             project_summary["instructions_refreshed"] = []
@@ -824,8 +839,9 @@ def migrate_v4_to_v5(data_path: Path) -> dict[str, Any]:
 
         summary["projects"].append(project_summary)
 
-    # 5. Bump schema version.
-    if cfg_data.get("version") != SCHEMA_V5:
+    # 5. Bump schema version only when migrating the full set — a partial
+    # migration leaves other projects on the legacy layout.
+    if only is None and cfg_data.get("version") != SCHEMA_V5:
         cfg_data["version"] = SCHEMA_V5
         config_path.write_text(
             json.dumps(cfg_data, indent=2, ensure_ascii=False) + "\n",
@@ -974,7 +990,17 @@ def migrate_cmd(
         return
 
     if target == "v5":
-        summary = migrate_v4_to_v5(data_path)
+        # When the caller passed --project NAME entries, scope to those names.
+        # The flag is shared with v3 (where it expects directory paths) — for
+        # v5 we treat each value as a registered project name and fall back to
+        # the directory's basename otherwise.
+        only = None
+        if projects:
+            only = [
+                Path(p).expanduser().name if "/" in p or "\\" in p else p
+                for p in projects
+            ]
+        summary = migrate_v4_to_v5(data_path, only_projects=only)
         print_v5_migration_summary(summary)
         return
 
