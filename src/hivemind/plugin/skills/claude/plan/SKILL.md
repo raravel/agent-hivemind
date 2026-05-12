@@ -16,14 +16,68 @@ Plans a project by creating harness documents (specs) first, then decomposing wo
 
 ## Mode selection
 
-Resolve `{project}` from `cat .hivemind-link.json` and `{data_path}` from `hv config data_path`. Check whether `{data_path}/projects/{project}/` already has harness docs.
+Resolve `{project}` from `cat hivemind/link.json` (fallback: `cat .hivemind-link.json`). Check whether `hivemind/docs/` already has harness files (v5 in-repo layout).
 
-- **No harness directory** → **Full planning mode**: Phase 0 (Grounding) → Phase 1 (Harness Documents) → Phase 2 (Task Creation).
-- **Harness directory exists** → ask the user (one question) whether to:
-  - **(a)** plan a new feature on top of the existing harness (Phase 0 still runs to refresh tech-stack — cheap; then jump to Phase 1 for the *new* feature only and Phase 2 for tasks), OR
-  - **(b)** re-ground only — run Phase 0 and rewrite **only** `tech-stack.md`. Do not touch `architecture.md`, `features/*.md`, `rules.md`, or `verify.md`. No tasks created. Report "re-grounded".
+Decision tree:
 
-Default for (a)/(b) is (a) when the user said "plan", default is (b) when the user said "reground" / "fix tech-stack" / similar.
+1. **`hivemind/docs/` is empty or absent.** Also count source files via `git ls-files | wc -l` (excluding `.md`, lockfiles, generated dirs).
+   - ≥ 5 source files → **Bootstrap mode** (the codebase exists; reverse-engineer specs from observed code).
+   - < 5 source files → **Full planning mode** (greenfield: Phase 0 → Phase 1 → Phase 2 from the user's intent).
+2. **`hivemind/docs/` has files** → ask the user (one question):
+   - **(a)** plan a new feature on top of the existing harness (Phase 0 refreshes tech-stack; Phase 1 writes the *new* feature file only; Phase 2 creates tasks), OR
+   - **(b)** re-ground only — run Phase 0 and rewrite **only** `tech-stack.md`. Do not touch `architecture.md`, `features/*.md`, `rules.md`, or `verify.md`. No tasks created. Report "re-grounded".
+
+   Default for (a)/(b) is (a) when the user said "plan", default is (b) when the user said "reground" / "fix tech-stack" / similar.
+
+## Bootstrap mode (existing codebase, no specs yet)
+
+When `hivemind/docs/` is empty and the repo already has code, you reverse-engineer the harness from what's actually there. Do NOT create tasks in this mode — the user explicitly requests planning afterwards.
+
+**B.0 — Run Phase 0 Grounding** (manifest + build-artifact scan, vendored/legacy classification — same as the regular Phase 0 below).
+
+**B.1 — Codebase walk.** `git ls-files` and bucket directories:
+- code dirs (`src/`, `app/`, `routes/`, `lib/`)
+- test dirs (`tests/`, `__tests__/`, `spec/`)
+- asset dirs (`views/`, `public/`, `static/`, `templates/`)
+- build/config (`Dockerfile`, `scripts/`, `.github/`)
+
+**B.2 — Feature detection.** Group by structure:
+- Subdirectories with multiple related files (`routes/target/`, `views/admin/`) → one feature per directory.
+- Same-prefix files in a flat dir (`models/user.py`, `models/order.py`) → entity-based features.
+- Single-file modules are typically utilities, NOT features.
+
+For each detected feature, pick 2–5 representative files to seed `## Implementation`.
+
+**B.3 — Convention detection.** Sample 3–5 large source modules:
+- Language idioms (sync vs async; framework helpers vs vanilla).
+- Explicit preference comments ("prefer X over Y").
+- Naming conventions.
+
+These feed `rules.md` under a `Observed — please confirm` heading so the user can promote or remove each item.
+
+**B.4 — Draft writes (every spec via `hv spec write`).** Prefix each file's first line with the marker `> AI-drafted from existing code; review before relying.`
+
+```bash
+hv spec write tech-stack    -p <project> <<'EOF' ... EOF
+hv spec write architecture  -p <project> <<'EOF' ... EOF
+hv spec write rules         -p <project> <<'EOF' ... EOF
+hv spec write verify        -p <project> <<'EOF' ... EOF
+# For each detected feature:
+hv spec write features/<slug> -p <project> <<'EOF' ... EOF
+```
+
+**B.5 — Review gate.** Output to the user:
+
+```
+Bootstrapped: N features (<list>), M active deps, K legacy libs, J inferred rules.
+
+Review hivemind/docs/ and edit. Then:
+- /hv:plan again — to add a NEW feature on top of these
+- /hv:audit -p <project> — to verify code↔spec mapping
+- hv harness-score show -p <project> — to score the bootstrap quality
+```
+
+Exit. Bootstrap creates NO tasks.
 
 ## Planning a new project or feature (Batch task creation)
 
@@ -77,12 +131,29 @@ This summary must appear in the user-visible message before Phase 1 starts. If a
 
 ### Phase 1: Harness Documents (MANDATORY before creating tasks)
 
-Before creating ANY tasks, write harness documents to `{data_path}/projects/{project}/`.
-Phase 0's grounding output feeds directly into `tech-stack.md` below.
+Before creating ANY tasks, write harness documents to `hivemind/docs/` in the linked project repo (v5 layout). Phase 0's grounding output feeds directly into `tech-stack.md` below.
 
 Research what you need (library docs, API specs, etc.) via web search BEFORE writing these documents. The documents must contain enough detail for an agent to implement each task without asking questions.
 
-Create these files by writing directly to the filesystem:
+**Write every spec via the `hv spec write` CLI** — do NOT use Write/Edit tools on these files directly. The CLI resolves the v5 location, writes atomically, and prints the resolved path on stdout. Use a heredoc to pipe content:
+
+```bash
+hv spec write tech-stack -p <project> <<'EOF'
+# ...content...
+EOF
+```
+
+For per-feature files, the CLI auto-numbers `features/NN_<slug>.md`:
+
+```bash
+hv spec write features/<slug> -p <project> <<'EOF'
+# ...feature spec...
+EOF
+```
+
+After `hv spec write`, the stdout contains the resolved path. If you previously had the file via `@import`, re-read it with the Read tool — the in-context copy is now stale.
+
+Spec files to produce (each via `hv spec write`):
 
 1. **`architecture.md`** — System architecture, module boundaries, data flow
    - Component diagram using **Mermaid** (`graph TD`, `flowchart`, `C4Context`, etc.)
@@ -196,28 +267,26 @@ hv task create -p <project> -t "Update deadline API" --type task --parent <STORY
 - `story`: groups related tasks, parent must be an epic
 - `task`/`bug`/`chore`: actual work items, parent must be a story
 
-**After creating each task via CLI, IMMEDIATELY write the body:**
+**After creating each task via CLI, IMMEDIATELY write the body via `hv task body-set <id>`:**
 
 ```bash
-# Find the task file path from the CLI output, then append content to it
-```
-
-**Required task body format:**
-
-```markdown
+hv task body-set <TASK-ID> <<'EOF'
 ## Description
 What this task implements and why.
 
 ## Spec References
-- `projects/{project}/architecture.md` — relevant section
-- `projects/{project}/features/00_feature-name.md` — full feature spec
+- `hivemind/docs/architecture.md` — relevant section
+- `hivemind/docs/features/00_feature-name.md` — full feature spec
 
 ## Completion Criteria
 - [ ] Criterion 1 (concrete, verifiable)
 - [ ] Criterion 2 (concrete, verifiable)
 - [ ] Build/lint passes
 - [ ] Tests pass (if applicable)
+EOF
 ```
+
+Use `hv task body-append <id>` to extend a body and `hv task criteria-add <id> "<text>"` / `hv task criteria-check <id> <n>` to manage completion criteria — never edit task `.md` files with Write/Edit.
 
 **Completion criteria rules:**
 - Each criterion must be objectively verifiable (not "works well" but "returns 200 on POST /api/todos")
@@ -272,7 +341,7 @@ See [references/task-format.md](references/task-format.md) for the frontmatter s
 - **NEVER create a task without a body.** Every task must have description, spec references, and completion criteria.
 - **NEVER carry library names from a previous tech-stack.md without re-verifying** against the current manifests + artifacts (Phase 0).
 - **ALWAYS research before writing specs.** Use web search to get accurate library APIs, configuration formats, and best practices.
-- **ALWAYS use the `hv task` CLI** via Bash tool for creating/updating tasks. Write the body directly to the file after CLI creation.
+- **ALWAYS use the `hv task` / `hv spec` CLI** via Bash tool for creating, updating, and writing spec or task content. Direct Write/Edit on files under `hivemind/docs/` or `hivemind/tasks/` is forbidden.
 - **ALWAYS include a `## Implementation` section in every feature file.** Even an initial intent-only list is fine — tasks will refine it.
 - NEVER create a task without a `--project` flag.
 - ALWAYS validate that the project exists (was linked via `hv link`) before creating tasks.

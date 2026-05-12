@@ -53,13 +53,15 @@ def _make_workspace(
     return config_path, data_path
 
 
-def _invoke(tmp_path: Path, args: list[str]) -> Any:
+def _invoke(
+    tmp_path: Path, args: list[str], input: str | None = None
+) -> Any:
     """Invoke task CLI with cwd set to tmp_path (where .hivemind.json lives)."""
     runner = CliRunner()
     old_cwd = os.getcwd()
     try:
         os.chdir(tmp_path)
-        return runner.invoke(task, args)
+        return runner.invoke(task, args, input=input)
     finally:
         os.chdir(old_cwd)
 
@@ -704,3 +706,83 @@ class TestTaskIndex:
         assert entry["title"] == "Schema test"
         assert "updated" in entry
         assert "completed_at" in entry
+
+
+class TestTaskBodyAndCriteria:
+    """Tests for body-set / body-append / criteria-add / criteria-check."""
+
+    def _create_task(self, tmp_path: Path) -> Path:
+        _make_workspace(tmp_path)
+        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Body test"])
+        return _tasks_dir(tmp_path) / "MP-001.md"
+
+    def test_body_set_replaces_content(self, tmp_path: Path) -> None:
+        task_path = self._create_task(tmp_path)
+        result = _invoke(tmp_path, ["body-set", "MP-001"], input="hello body\n")
+        assert result.exit_code == 0, result.output
+        text = task_path.read_text(encoding="utf-8")
+        assert "hello body" in text
+
+    def test_body_set_preserves_frontmatter(self, tmp_path: Path) -> None:
+        task_path = self._create_task(tmp_path)
+        result = _invoke(tmp_path, ["body-set", "MP-001"], input="X\n")
+        assert result.exit_code == 0, result.output
+        fm, _body = parse_task(task_path)
+        assert fm["id"] == "MP-001"
+        assert fm["title"] == "Body test"
+
+    def test_body_append_adds_after_existing(self, tmp_path: Path) -> None:
+        task_path = self._create_task(tmp_path)
+        _invoke(tmp_path, ["body-set", "MP-001"], input="first\n")
+        result = _invoke(
+            tmp_path, ["body-append", "MP-001"], input="second\n"
+        )
+        assert result.exit_code == 0, result.output
+        _fm, body = parse_task(task_path)
+        assert "first" in body
+        assert "second" in body
+        assert body.find("first") < body.find("second")
+
+    def test_criteria_add_creates_section(self, tmp_path: Path) -> None:
+        task_path = self._create_task(tmp_path)
+        result = _invoke(tmp_path, ["criteria-add", "MP-001", "ship it"])
+        assert result.exit_code == 0, result.output
+        _fm, body = parse_task(task_path)
+        assert "## Completion Criteria" in body
+        assert "- [ ] ship it" in body
+
+    def test_criteria_add_appends_to_existing_section(
+        self, tmp_path: Path
+    ) -> None:
+        task_path = self._create_task(tmp_path)
+        _invoke(tmp_path, ["criteria-add", "MP-001", "first"])
+        result = _invoke(tmp_path, ["criteria-add", "MP-001", "second"])
+        assert result.exit_code == 0, result.output
+        _fm, body = parse_task(task_path)
+        assert body.count("## Completion Criteria") == 1
+        assert "- [ ] first" in body
+        assert "- [ ] second" in body
+
+    def test_criteria_check_toggles(self, tmp_path: Path) -> None:
+        task_path = self._create_task(tmp_path)
+        _invoke(tmp_path, ["criteria-add", "MP-001", "alpha"])
+        _invoke(tmp_path, ["criteria-add", "MP-001", "beta"])
+
+        result = _invoke(tmp_path, ["criteria-check", "MP-001", "1"])
+        assert result.exit_code == 0, result.output
+        _fm, body = parse_task(task_path)
+        assert "- [x] alpha" in body
+        assert "- [ ] beta" in body
+
+        # Toggling again flips back.
+        result = _invoke(tmp_path, ["criteria-check", "MP-001", "1"])
+        assert result.exit_code == 0
+        _fm, body = parse_task(task_path)
+        assert "- [ ] alpha" in body
+
+    def test_criteria_check_rejects_out_of_range(self, tmp_path: Path) -> None:
+        self._create_task(tmp_path)
+        _invoke(tmp_path, ["criteria-add", "MP-001", "only one"])
+        result = _invoke(tmp_path, ["criteria-check", "MP-001", "5"])
+        assert result.exit_code != 0
+        assert "out of range" in result.output

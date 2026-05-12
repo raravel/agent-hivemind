@@ -39,7 +39,7 @@ You (Orchestrator)
 Scan previous reports for unreviewed incidents:
 
 ```bash
-grep -rl "## Incident" {data_path}/tasks/{project}/_reports/ 2>/dev/null | head -5
+grep -rl "## Incident" <linked>/hivemind/tasks/_reports/ 2>/dev/null | head -5
 ```
 
 If any are found, show: **"N reports have unreviewed incidents. Run `hv-feedback` to promote lessons."** Informational only — do NOT block. Proceed immediately.
@@ -75,7 +75,7 @@ Pricing is a map of `model_id -> {input, output}` dollars per Mtoken. Keep both 
 
 ### 4. Read harness documents (YOU do this — MANDATORY)
 
-Read docs in `{data_path}/projects/{project}/` referenced by the task's **Spec References**:
+Read docs in `<linked>/hivemind/docs/` referenced by the task's **Spec References**:
 
 - `architecture.md` — module boundaries, data flow
 - `tech-stack.md` — libraries, versions, patterns
@@ -236,7 +236,7 @@ Log `harness sync: no-op (all touched files already documented)` and proceed to 
 
 A *contract* is anything the spec promises (function names, endpoint paths, NEVER/ALWAYS rules). Tasks may add bindings; they must NOT silently change a contract.
 
-Run these heuristic checks against the diff. Use **string match** against `{data_path}/projects/{project}/features/*.md` and `rules.md`:
+Run these heuristic checks against the diff. Use **string match** against `<linked>/hivemind/docs/features/*.md` and `rules.md`:
 
 1. **Removed function / endpoint identifiers** — for each `-` line in the diff matching one of the following patterns, extract the identifier:
    - `function <name>(`, `<name> = (` arrow, `const <name> = (`
@@ -335,7 +335,7 @@ Only proceed to step 12 after ALL of:
 
 ### 13. Record execution report
 
-Write to `{data_path}/tasks/{project}/_reports/{TASK-ID}-report.md`:
+Write to `<linked>/hivemind/tasks/_reports/{TASK-ID}-report.md` (v5 in-repo layout). Reports are post-merge artifacts; the orchestrator may write them directly:
 
 ```markdown
 ---

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from collections import defaultdict
 from datetime import date, datetime
 from pathlib import Path
@@ -867,6 +868,190 @@ def update(
                 break
 
         _auto_complete_parents(cfg, fm, all_tasks)
+
+
+def _write_task_body(path: Path, body: str) -> None:
+    """Rewrite *path* preserving frontmatter and replacing the body."""
+    import frontmatter
+
+    post = frontmatter.load(str(path))
+    post.content = body
+    path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+
+def _read_stdin_or_file(content_file: str | None) -> str:
+    """Read body text from --content FILE or stdin."""
+    if content_file is not None:
+        return Path(content_file).read_text(encoding="utf-8")
+    if sys.stdin.isatty():
+        click.echo("Enter text (Ctrl+D to finish):", err=True)
+    return sys.stdin.read()
+
+
+def _bump_updated(task_path: Path, tasks_dir: Path, task_id: str) -> None:
+    """Touch the ``updated`` frontmatter field and refresh the index entry."""
+    update_frontmatter(task_path, {"updated": date.today().isoformat()})
+    fm_after, _body = parse_task(task_path)
+    _update_task_index_entry(tasks_dir, task_id, fm_after)
+
+
+@task.command(name="body-set")
+@click.argument("task_id")
+@click.option(
+    "--content",
+    "-c",
+    "content_file",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="File with body text (reads from stdin if omitted).",
+)
+def body_set_cmd(task_id: str, content_file: str | None) -> None:
+    """Replace the body of a task from stdin (or --content FILE)."""
+    cfg, _ = _find_config()
+    task_path, _proj, tasks_dir = _find_task_with_project(cfg, task_id)
+    body = _read_stdin_or_file(content_file)
+    _write_task_body(task_path, body)
+    _bump_updated(task_path, tasks_dir, task_id)
+    linked_path = tasks_dir.parent.parent
+    auto_commit(linked_path, f"task: body-set {task_id}")
+    click.echo(f"Wrote: {task_path}")
+
+
+@task.command(name="body-append")
+@click.argument("task_id")
+@click.option(
+    "--content",
+    "-c",
+    "content_file",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="File with body text (reads from stdin if omitted).",
+)
+def body_append_cmd(task_id: str, content_file: str | None) -> None:
+    """Append to the body of a task from stdin (or --content FILE)."""
+    cfg, _ = _find_config()
+    task_path, _proj, tasks_dir = _find_task_with_project(cfg, task_id)
+    addition = _read_stdin_or_file(content_file)
+    _fm, body = parse_task(task_path)
+    if body and not body.endswith("\n"):
+        body += "\n"
+    new_body = body + addition
+    _write_task_body(task_path, new_body)
+    _bump_updated(task_path, tasks_dir, task_id)
+    linked_path = tasks_dir.parent.parent
+    auto_commit(linked_path, f"task: body-append {task_id}")
+    click.echo(f"Wrote: {task_path}")
+
+
+_CRITERIA_HEADER = "## Completion Criteria"
+
+
+def _split_criteria(body: str) -> tuple[str, list[str], str]:
+    """Split *body* into (head, criteria_lines, tail).
+
+    The criteria section starts at ``## Completion Criteria`` and ends at the
+    next ``## `` heading (or EOF). Each remaining `- [ ]`/`- [x]` line is one
+    criterion. When the header is absent, returns (body, [], "").
+    """
+    lines = body.splitlines(keepends=False)
+    start: int | None = None
+    end: int | None = None
+    for i, line in enumerate(lines):
+        if line.strip() == _CRITERIA_HEADER:
+            start = i
+            continue
+        if start is not None and line.startswith("## ") and i > start:
+            end = i
+            break
+    if start is None:
+        return body, [], ""
+
+    if end is None:
+        end = len(lines)
+
+    section_lines = lines[start + 1 : end]
+    criteria = [
+        line for line in section_lines
+        if line.lstrip().startswith(("- [", "* ["))
+    ]
+    head = "\n".join(lines[: start + 1]) + "\n"
+    tail_lines = lines[end:]
+    tail = ("\n" + "\n".join(tail_lines)) if tail_lines else ""
+    return head, criteria, tail
+
+
+def _render_criteria(head: str, criteria: list[str], tail: str) -> str:
+    body = head + ("\n".join(criteria) + ("\n" if criteria else ""))
+    if tail:
+        body = body.rstrip("\n") + "\n" + tail.lstrip("\n")
+    return body
+
+
+@task.command(name="criteria-add")
+@click.argument("task_id")
+@click.argument("text")
+def criteria_add_cmd(task_id: str, text: str) -> None:
+    """Append a ``- [ ] <text>`` line to ``## Completion Criteria``.
+
+    Adds the section if it doesn't already exist.
+    """
+    cfg, _ = _find_config()
+    task_path, _proj, tasks_dir = _find_task_with_project(cfg, task_id)
+    _fm, body = parse_task(task_path)
+    text = text.strip()
+    if not text:
+        raise click.ClickException("Empty criterion text.")
+
+    head, criteria, tail = _split_criteria(body)
+    line = f"- [ ] {text}"
+    if head == body and not criteria and not tail:
+        # No criteria section yet — append one.
+        if body and not body.endswith("\n"):
+            body += "\n"
+        new_body = body + f"\n{_CRITERIA_HEADER}\n{line}\n"
+    else:
+        criteria.append(line)
+        new_body = _render_criteria(head, criteria, tail)
+
+    _write_task_body(task_path, new_body)
+    _bump_updated(task_path, tasks_dir, task_id)
+    linked_path = tasks_dir.parent.parent
+    auto_commit(linked_path, f"task: criteria-add {task_id}")
+    click.echo(f"Added: {line}")
+
+
+@task.command(name="criteria-check")
+@click.argument("task_id")
+@click.argument("index", type=int)
+def criteria_check_cmd(task_id: str, index: int) -> None:
+    """Toggle ``- [ ]`` <-> ``- [x]`` at the 1-based *index*."""
+    cfg, _ = _find_config()
+    task_path, _proj, tasks_dir = _find_task_with_project(cfg, task_id)
+    _fm, body = parse_task(task_path)
+    head, criteria, tail = _split_criteria(body)
+    if not criteria:
+        raise click.ClickException("Task has no completion criteria.")
+    if index < 1 or index > len(criteria):
+        raise click.ClickException(
+            f"Criterion index {index} out of range (1..{len(criteria)})."
+        )
+
+    line = criteria[index - 1]
+    if "- [ ]" in line:
+        criteria[index - 1] = line.replace("- [ ]", "- [x]", 1)
+    elif "- [x]" in line:
+        criteria[index - 1] = line.replace("- [x]", "- [ ]", 1)
+    else:
+        raise click.ClickException(
+            f"Criterion line is not a checkbox: {line!r}"
+        )
+
+    new_body = _render_criteria(head, criteria, tail)
+    _write_task_body(task_path, new_body)
+    _bump_updated(task_path, tasks_dir, task_id)
+    linked_path = tasks_dir.parent.parent
+    auto_commit(linked_path, f"task: criteria-check {task_id}")
+    click.echo(f"Toggled: {criteria[index - 1]}")
 
 
 @task.command(name="next")

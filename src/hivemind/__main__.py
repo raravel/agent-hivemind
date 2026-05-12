@@ -18,6 +18,7 @@ from hivemind.commands.run import run as _run_cmd
 from hivemind.commands.search import index as _index_group
 from hivemind.commands.search import search as _search_cmd
 from hivemind.commands.search import search_read as _search_read_cmd
+from hivemind.commands.spec import spec as _spec_group
 from hivemind.commands.stats import stats as _stats_cmd
 from hivemind.commands.task import task as _task_group
 
@@ -41,6 +42,11 @@ cli.add_command(_push_cmd, "push")
 # --- task group ---
 
 cli.add_command(_task_group)
+
+
+# --- spec group ---
+
+cli.add_command(_spec_group)
 
 
 # --- run ---
