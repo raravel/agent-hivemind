@@ -660,6 +660,207 @@ def print_completed_at_migration_summary(summary: dict[str, Any]) -> None:
     click.echo(f"  Tasks migrated: {summary.get('tasks_migrated', 0)}")
 
 
+# ---------------------------------------------------------------------------
+# v4 -> v5: relocate project-local artifacts into the linked repo
+# ---------------------------------------------------------------------------
+
+SCHEMA_V5 = "5.0.0"
+
+
+def _is_git_repo(path: Path) -> bool:
+    return (path / ".git").exists()
+
+
+def _git_mv(repo: Path, src: Path, dst: Path) -> bool:
+    """Try ``git mv``; return True on success."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "mv", str(src), str(dst)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def _move_path(src: Path, dst: Path, repo: Path | None) -> bool:
+    """Move *src* to *dst*. Prefer ``git mv`` when *repo* is a git tree.
+
+    Returns True if something was moved. Skips silently when src is missing.
+    """
+    if not src.exists():
+        return False
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if repo is not None and _is_git_repo(repo) and _git_mv(repo, src, dst):
+        return True
+    shutil.move(str(src), str(dst))
+    return True
+
+
+def _move_dir_contents(src_dir: Path, dst_dir: Path, repo: Path | None) -> int:
+    """Move every entry in *src_dir* into *dst_dir*. Returns moved count."""
+    if not src_dir.exists():
+        return 0
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    for entry in sorted(src_dir.iterdir()):
+        target = dst_dir / entry.name
+        if target.exists():
+            # Skip; assume already migrated for this entry.
+            continue
+        if _move_path(entry, target, repo):
+            moved += 1
+    # Remove the now-empty source dir; ignore if not empty.
+    try:
+        src_dir.rmdir()
+    except OSError:
+        pass
+    return moved
+
+
+def migrate_v4_to_v5(data_path: Path) -> dict[str, Any]:
+    """Move project-local artifacts from the data dir to each linked repo.
+
+    For every registered project with a valid ``linked_path``:
+      - ``<data>/projects/<name>/*`` -> ``<linked>/hivemind/docs/``
+      - ``<data>/projects/<name>/_harness_scores.jsonl`` ->
+        ``<linked>/hivemind/harness-scores.jsonl``
+      - ``<data>/tasks/<name>/*`` -> ``<linked>/hivemind/tasks/``
+      - ``<linked>/.hivemind-link.json`` -> ``<linked>/hivemind/link.json``
+      - Refresh CLAUDE.md / AGENTS.md so imports use relative ``@hivemind/...``.
+
+    Cross-project state (level2, level3, index.json) is left in place.
+
+    Idempotent: re-running on an already-migrated project is a no-op.
+    """
+    summary: dict[str, Any] = {
+        "projects": [],
+        "skipped": [],
+        "version_updated": False,
+    }
+
+    config_path = data_path / ".hivemind.json"
+    if not config_path.exists():
+        return summary
+
+    try:
+        with config_path.open("r", encoding="utf-8") as f:
+            cfg_data: dict[str, Any] = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return summary
+
+    projects = cfg_data.get("projects") or {}
+    if not isinstance(projects, dict):
+        projects = {}
+
+    for name, proj in projects.items():
+        if not isinstance(proj, dict):
+            continue
+        linked_raw = proj.get("linked_path")
+        if not isinstance(linked_raw, str) or not linked_raw:
+            summary["skipped"].append({"project": name, "reason": "no linked_path"})
+            continue
+        linked = Path(linked_raw).expanduser()
+        if not linked.exists():
+            summary["skipped"].append(
+                {"project": name, "reason": f"linked_path missing: {linked}"}
+            )
+            continue
+
+        project_summary: dict[str, Any] = {
+            "project": name,
+            "linked_path": str(linked),
+            "specs_moved": 0,
+            "tasks_moved": 0,
+            "scores_moved": False,
+            "link_file_moved": False,
+            "instructions_refreshed": [],
+        }
+
+        hivemind_dir = linked / "hivemind"
+        docs_dir = hivemind_dir / "docs"
+        tasks_dir = hivemind_dir / "tasks"
+        hivemind_dir.mkdir(exist_ok=True)
+        docs_dir.mkdir(exist_ok=True)
+        tasks_dir.mkdir(exist_ok=True)
+
+        # 1. Specs: <data>/projects/<name>/* -> <linked>/hivemind/docs/
+        legacy_specs = data_path / "projects" / name
+        scores_src = legacy_specs / "_harness_scores.jsonl"
+
+        # Move the scores file first so it doesn't sit under docs/.
+        if scores_src.exists():
+            scores_dst = hivemind_dir / "harness-scores.jsonl"
+            if not scores_dst.exists():
+                if _move_path(scores_src, scores_dst, repo=data_path):
+                    project_summary["scores_moved"] = True
+
+        moved_specs = _move_dir_contents(legacy_specs, docs_dir, repo=data_path)
+        project_summary["specs_moved"] = moved_specs
+
+        # 2. Tasks: <data>/tasks/<name>/* -> <linked>/hivemind/tasks/
+        legacy_tasks = data_path / "tasks" / name
+        moved_tasks = _move_dir_contents(legacy_tasks, tasks_dir, repo=data_path)
+        project_summary["tasks_moved"] = moved_tasks
+
+        # 3. Link file: <linked>/.hivemind-link.json -> <linked>/hivemind/link.json
+        legacy_link = linked / ".hivemind-link.json"
+        new_link = hivemind_dir / "link.json"
+        if legacy_link.exists() and not new_link.exists():
+            if _move_path(legacy_link, new_link, repo=linked):
+                project_summary["link_file_moved"] = True
+
+        # 4. Refresh CLAUDE.md / AGENTS.md (relative @hivemind/... imports).
+        try:
+            refreshed = write_instruction_files(linked, project=name)
+            project_summary["instructions_refreshed"] = sorted(refreshed)
+        except Exception as exc:  # noqa: BLE001
+            project_summary["instructions_refreshed"] = []
+            project_summary["instructions_error"] = str(exc)
+
+        summary["projects"].append(project_summary)
+
+    # 5. Bump schema version.
+    if cfg_data.get("version") != SCHEMA_V5:
+        cfg_data["version"] = SCHEMA_V5
+        config_path.write_text(
+            json.dumps(cfg_data, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        summary["version_updated"] = True
+
+    return summary
+
+
+def print_v5_migration_summary(summary: dict[str, Any]) -> None:
+    click.echo("Migration summary (v4 -> v5):")
+    projects = summary.get("projects") or []
+    if not projects:
+        click.echo("  No projects to migrate.")
+    for p in projects:
+        click.echo(
+            f"  - {p['project']}: "
+            f"{p.get('specs_moved', 0)} specs, "
+            f"{p.get('tasks_moved', 0)} tasks, "
+            f"scores={'yes' if p.get('scores_moved') else 'no'}, "
+            f"link={'yes' if p.get('link_file_moved') else 'no'}"
+        )
+        refreshed = p.get("instructions_refreshed") or []
+        if refreshed:
+            click.echo(f"      refreshed: {', '.join(refreshed)}")
+        err = p.get("instructions_error")
+        if err:
+            click.echo(f"      WARN: instruction refresh failed — {err}")
+    for s in summary.get("skipped", []) or []:
+        click.echo(f"  - SKIP {s['project']}: {s['reason']}")
+    if summary.get("version_updated"):
+        click.echo(f"  Schema version bumped to {SCHEMA_V5}.")
+
+
 def _detect_current_version(data_path: Path) -> str | None:
     config_path = data_path / ".hivemind.json"
     if not config_path.exists():
@@ -679,6 +880,8 @@ def _detect_current_version(data_path: Path) -> str | None:
                 return "v3"
             if version == "4.0.0":
                 return "v4"
+            if version == SCHEMA_V5:
+                return "v5"
         return "v3"
     except Exception:
         return None
@@ -688,7 +891,7 @@ def _detect_current_version(data_path: Path) -> str | None:
 @click.option(
     "--to",
     "target",
-    type=click.Choice(["v2", "v3", "v3.1", "v4"]),
+    type=click.Choice(["v2", "v3", "v3.1", "v4", "v5"]),
     default=None,
     help="Target schema version (prompts if omitted).",
 )
@@ -725,15 +928,17 @@ def migrate_cmd(
 
     if target is None:
         current = _detect_current_version(data_path)
-        choices = ["v2", "v3", "v3.1", "v4"]
+        choices = ["v2", "v3", "v3.1", "v4", "v5"]
         if current == "v1":
             default = "v2"
         elif current == "v2":
             default = "v3"
         elif current == "v3":
             default = "v4"
+        elif current == "v4":
+            default = "v5"
         else:
-            default = "v4"
+            default = "v5"
 
         target = questionary.select(
             "Select target version",
@@ -766,6 +971,11 @@ def migrate_cmd(
             click.echo(f"Migrated {config_path} to v4.")
         else:
             click.echo("Already on v4. Nothing to do.")
+        return
+
+    if target == "v5":
+        summary = migrate_v4_to_v5(data_path)
+        print_v5_migration_summary(summary)
         return
 
     # target == "v3"

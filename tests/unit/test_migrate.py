@@ -618,3 +618,149 @@ class TestMigrateCLIToV4:
         )
         assert result.exit_code != 0
         assert "hv init" in result.output
+
+
+# ---------------------------------------------------------------------------
+# v4 -> v5
+# ---------------------------------------------------------------------------
+
+
+def _make_v4_with_project(tmp_path: Path) -> tuple[Path, Path]:
+    """Build a v4 data dir + a linked project repo. Returns (data, linked)."""
+    data = tmp_path / "data"
+    data.mkdir()
+    linked = tmp_path / "my-project"
+    linked.mkdir()
+
+    # v4 config registers the project.
+    _write_config(
+        data,
+        {
+            "version": "4.0.0",
+            "projects": {
+                "demo": {
+                    "prefix": "DEMO",
+                    "linked_path": str(linked),
+                }
+            },
+        },
+    )
+
+    # Legacy specs at <data>/projects/demo/
+    specs = data / "projects" / "demo"
+    specs.mkdir(parents=True)
+    (specs / "architecture.md").write_text("# arch\n", encoding="utf-8")
+    (specs / "rules.md").write_text("# rules\n", encoding="utf-8")
+    (specs / "_harness_scores.jsonl").write_text(
+        '{"overall": 30}\n', encoding="utf-8"
+    )
+
+    # Legacy tasks at <data>/tasks/demo/
+    tasks = data / "tasks" / "demo"
+    tasks.mkdir(parents=True)
+    (tasks / "DEMO-001.md").write_text(
+        "---\nid: DEMO-001\nstatus: done\n---\n", encoding="utf-8"
+    )
+    (tasks / "_counter.json").write_text('{"value": 1}\n', encoding="utf-8")
+
+    # Legacy link file at <linked>/.hivemind-link.json
+    (linked / ".hivemind-link.json").write_text(
+        json.dumps({"project": "demo", "prefix": "DEMO"}), encoding="utf-8"
+    )
+
+    return data, linked
+
+
+class TestMigrateV4ToV5:
+    """Tests for migrate_v4_to_v5()."""
+
+    def test_moves_specs_tasks_scores_and_link(self, tmp_path: Path) -> None:
+        from hivemind.commands.migrate import SCHEMA_V5, migrate_v4_to_v5
+
+        data, linked = _make_v4_with_project(tmp_path)
+
+        summary = migrate_v4_to_v5(data)
+
+        # Specs moved to <linked>/hivemind/docs/
+        assert (linked / "hivemind" / "docs" / "architecture.md").exists()
+        assert (linked / "hivemind" / "docs" / "rules.md").exists()
+        assert not (data / "projects" / "demo" / "architecture.md").exists()
+
+        # Scores renamed and relocated.
+        scores = linked / "hivemind" / "harness-scores.jsonl"
+        assert scores.exists()
+        assert not (data / "projects" / "demo" / "_harness_scores.jsonl").exists()
+
+        # Tasks moved to <linked>/hivemind/tasks/
+        assert (linked / "hivemind" / "tasks" / "DEMO-001.md").exists()
+        assert (linked / "hivemind" / "tasks" / "_counter.json").exists()
+        assert not (data / "tasks" / "demo" / "DEMO-001.md").exists()
+
+        # Link file relocated.
+        assert (linked / "hivemind" / "link.json").exists()
+        assert not (linked / ".hivemind-link.json").exists()
+
+        # Schema bumped.
+        cfg = json.loads((data / ".hivemind.json").read_text(encoding="utf-8"))
+        assert cfg["version"] == SCHEMA_V5
+
+        # Summary covers the project.
+        names = [p["project"] for p in summary["projects"]]
+        assert names == ["demo"]
+        assert summary["version_updated"] is True
+
+    def test_idempotent(self, tmp_path: Path) -> None:
+        from hivemind.commands.migrate import migrate_v4_to_v5
+
+        data, linked = _make_v4_with_project(tmp_path)
+
+        first = migrate_v4_to_v5(data)
+        second = migrate_v4_to_v5(data)
+
+        # Second run finds nothing left to move.
+        proj = second["projects"][0]
+        assert proj["specs_moved"] == 0
+        assert proj["tasks_moved"] == 0
+        assert proj["scores_moved"] is False
+        assert proj["link_file_moved"] is False
+        assert second["version_updated"] is False
+        # First run did the work.
+        assert first["projects"][0]["specs_moved"] >= 2
+
+    def test_skips_project_with_missing_linked_path(self, tmp_path: Path) -> None:
+        from hivemind.commands.migrate import migrate_v4_to_v5
+
+        data = tmp_path / "data"
+        data.mkdir()
+        _write_config(
+            data,
+            {
+                "version": "4.0.0",
+                "projects": {
+                    "gone": {
+                        "prefix": "G",
+                        "linked_path": str(tmp_path / "does-not-exist"),
+                    }
+                },
+            },
+        )
+
+        summary = migrate_v4_to_v5(data)
+        assert summary["projects"] == []
+        assert any(s["project"] == "gone" for s in summary["skipped"])
+
+    def test_cli_dispatch(self, tmp_path: Path) -> None:
+        from click.testing import CliRunner
+
+        from hivemind.commands.migrate import migrate_cmd
+
+        data, linked = _make_v4_with_project(tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            migrate_cmd,
+            ["--to", "v5", "--path", str(data), "--no-backup"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "v4 -> v5" in result.output
+        assert (linked / "hivemind" / "docs" / "architecture.md").exists()
