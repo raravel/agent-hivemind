@@ -33,8 +33,12 @@ def _write_report(
 
 
 def _make_reports_dir(tmp_path: Path, project: str = "myproj") -> Path:
-    """Return the _reports directory for a project, creating parents."""
-    reports_dir = tmp_path / "tasks" / project / "_reports"
+    """Return the v5 _reports directory inside *tmp_path*.
+
+    tmp_path doubles as the project's linked_path in these tests.
+    """
+    del project  # noqa: F841 — retained for call-site clarity
+    reports_dir = tmp_path / "hivemind" / "tasks" / "_reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     return reports_dir
 
@@ -95,7 +99,7 @@ class TestCollectReports:
                 "completed_at": "2026-03-25T12:00:00",
             },
         )
-        result = _collect_reports(tmp_path, "myproj")
+        result = _collect_reports(tmp_path)
         assert len(result) == 2
 
     def test_filters_by_since(self, tmp_path: Path) -> None:
@@ -119,12 +123,12 @@ class TestCollectReports:
             },
         )
         since = datetime.fromisoformat("2026-03-20T00:00:00")
-        result = _collect_reports(tmp_path, "myproj", since=since)
+        result = _collect_reports(tmp_path, since=since)
         assert len(result) == 1
         assert result[0]["task_id"] == "PROJ-002"
 
     def test_returns_empty_for_missing_dir(self, tmp_path: Path) -> None:
-        result = _collect_reports(tmp_path, "nonexistent")
+        result = _collect_reports(tmp_path)
         assert result == []
 
     def test_skips_reports_without_completed_at_when_since(
@@ -137,7 +141,7 @@ class TestCollectReports:
             {"task_id": "PROJ-001", "status": "completed"},
         )
         since = datetime.fromisoformat("2026-03-20T00:00:00")
-        result = _collect_reports(tmp_path, "myproj", since=since)
+        result = _collect_reports(tmp_path, since=since)
         assert len(result) == 0
 
 
@@ -358,7 +362,8 @@ class TestStatsCLI:
         _result_obj, data_path = self._invoke_stats(tmp_path, ["-p", "myproj"])
 
         # Create reports after getting data_path
-        reports_dir = data_path / "tasks" / "myproj" / "_reports"
+        reports_dir = tmp_path / "hivemind" / "tasks" / "_reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
         _write_report(
             reports_dir,
             "PROJ-001.md",
@@ -397,7 +402,8 @@ class TestStatsCLI:
     def test_since_filtering(self, tmp_path: Path) -> None:
         _, data_path = self._invoke_stats(tmp_path, ["-p", "myproj"])
 
-        reports_dir = data_path / "tasks" / "myproj" / "_reports"
+        reports_dir = tmp_path / "hivemind" / "tasks" / "_reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
         _write_report(
             reports_dir,
             "PROJ-001.md",

@@ -18,15 +18,16 @@ from hivemind.commands.task import (
     _find_task_file,
     _scan_tasks,
 )
+from hivemind.core.config import HivemindConfig
 from hivemind.core.parser import parse_task
 
 
 def _find_in_progress(
-    data_path: Path,
+    cfg: HivemindConfig,
     project: str | None,
 ) -> tuple[dict[str, object], str, Path] | None:
     """Find the first in_progress task, or None."""
-    tasks = _scan_tasks(data_path, project)
+    tasks = _scan_tasks(cfg, project)
     for fm, body, path in tasks:
         if fm.get("status") == "in_progress":
             return fm, body, path
@@ -34,12 +35,12 @@ def _find_in_progress(
 
 
 def _find_ready_tasks(
-    data_path: Path,
+    cfg: HivemindConfig,
     project: str | None,
     leaf_only: bool = True,
 ) -> list[tuple[dict[str, object], str, Path]]:
     """Return all pending tasks with resolved deps, sorted by priority+age."""
-    all_tasks = _scan_tasks(data_path, project)
+    all_tasks = _scan_tasks(cfg, project)
 
     status_map: dict[str, str] = {}
     for fm, _body, _path in all_tasks:
@@ -83,7 +84,7 @@ def _find_ready_tasks(
 
 
 def _find_next_pending(
-    data_path: Path,
+    cfg: HivemindConfig,
     project: str | None,
 ) -> tuple[dict[str, object], str, Path] | None:
     """Find the next pending leaf task with resolved deps, sorted by priority.
@@ -91,7 +92,7 @@ def _find_next_pending(
     Epics and stories are containers, not implementation targets, so they are
     excluded — auto-detect always drills down to leaves.
     """
-    ready = _find_ready_tasks(data_path, project, leaf_only=True)
+    ready = _find_ready_tasks(cfg, project, leaf_only=True)
     return ready[0] if ready else None
 
 
@@ -185,10 +186,10 @@ def run(
     fmt: str,
 ) -> None:
     """Fetch task content for the run-task pipeline."""
-    cfg, data_path = _find_config()
+    cfg, _data_path = _find_config()
 
     if task_id is not None:
-        task_path = _find_task_file(data_path, task_id)
+        task_path = _find_task_file(cfg, task_id)
         fm, body = parse_task(task_path)
         _output_task(fm, body, task_path, fmt)
         return
@@ -208,7 +209,7 @@ def run(
             )
 
     if ready_only:
-        ready = _find_ready_tasks(data_path, scan_project, leaf_only=True)
+        ready = _find_ready_tasks(cfg, scan_project, leaf_only=True)
         if limit is not None and limit > 0:
             ready = ready[:limit]
         if not ready:
@@ -221,14 +222,14 @@ def run(
         return
 
     # Auto-detect: first look for in_progress
-    result = _find_in_progress(data_path, scan_project)
+    result = _find_in_progress(cfg, scan_project)
     if result is not None:
         fm, body, path = result
         _output_task(fm, body, path, fmt)
         return
 
     # Fallback to next pending
-    result = _find_next_pending(data_path, scan_project)
+    result = _find_next_pending(cfg, scan_project)
     if result is not None:
         fm, body, path = result
         _output_task(fm, body, path, fmt)

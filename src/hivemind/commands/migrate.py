@@ -648,7 +648,8 @@ def _migrate_completed_at(data_path: Path) -> dict[str, Any]:
                     summary["tasks_migrated"] += 1
             except Exception:
                 continue
-        _rebuild_task_index(data_path, project_dir.name)
+        # v3 step rebuilds index at the legacy path (data_path/tasks/<proj>)
+        _rebuild_task_index(project_dir)
 
     return summary
 

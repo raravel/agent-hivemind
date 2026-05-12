@@ -470,8 +470,9 @@ def quality_gate(
     return True, "ok"
 
 
-def _draft_path(data_path: Path, project: str, task_id: str) -> Path:
-    return data_path / "tasks" / project / "_reports" / f"{task_id}-lessons-draft.json"
+def _draft_path(linked_path: Path, task_id: str) -> Path:
+    from hivemind.core.paths import task_dir
+    return task_dir(linked_path) / "_reports" / f"{task_id}-lessons-draft.json"
 
 
 def _load_draft_file(path: Path) -> dict[str, Any]:
@@ -494,14 +495,15 @@ def _save_draft_file(path: Path, data: dict[str, Any]) -> None:
 
 
 def _pending_drafts(
-    data_path: Path, project: str, task_id: str | None
+    linked_path: Path, task_id: str | None
 ) -> list[tuple[Path, dict[str, Any], int]]:
     """Return [(draft_file, file_data, index)] for each pending draft."""
-    reports_dir = data_path / "tasks" / project / "_reports"
+    from hivemind.core.paths import task_dir
+    reports_dir = task_dir(linked_path) / "_reports"
     if not reports_dir.exists():
         return []
     files = (
-        [_draft_path(data_path, project, task_id)]
+        [_draft_path(linked_path, task_id)]
         if task_id
         else sorted(reports_dir.glob("*-lessons-draft.json"))
     )
@@ -715,7 +717,13 @@ def draft_add(
     if is_binding:
         draft_entry["kind"] = "BOUND"
 
-    draft_path = _draft_path(data_path, project, task_id)
+    # Drafts live alongside tasks under the project repo (v5).
+    draft_linked = _resolve_linked_path(project)
+    if draft_linked is None:
+        raise click.ClickException(
+            f"Project '{project}' is not linked. Run `hv link` first."
+        )
+    draft_path = _draft_path(draft_linked, task_id)
     data = _load_draft_file(draft_path)
     data["task_id"] = task_id
     data.setdefault("created", date.today().isoformat())
@@ -750,8 +758,12 @@ def draft_add(
 @click.option("--task", "task_id", default=None, help="Filter by task ID.")
 def drafts_list(project: str, task_id: str | None) -> None:
     """List pending draft lessons for a project."""
-    data_path = _resolve_data_path(project)
-    pending = _pending_drafts(data_path, project, task_id)
+    linked_path = _resolve_linked_path(project)
+    if linked_path is None:
+        raise click.ClickException(
+            f"Project '{project}' is not linked. Run `hv link` first."
+        )
+    pending = _pending_drafts(linked_path, task_id)
     if not pending:
         click.echo("No pending drafts.")
         return
@@ -843,7 +855,11 @@ def promote_drafts(project: str, task_id: str | None, auto: bool) -> None:
     """
     data_path = _resolve_data_path(project)
     linked_path = _resolve_linked_path(project)
-    pending = _pending_drafts(data_path, project, task_id)
+    if linked_path is None:
+        raise click.ClickException(
+            f"Project '{project}' is not linked. Run `hv link` first."
+        )
+    pending = _pending_drafts(linked_path, task_id)
     if not pending:
         click.echo("No pending drafts.")
         return

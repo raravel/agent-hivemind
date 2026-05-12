@@ -20,6 +20,7 @@ from hivemind.core.parser import (
     update_frontmatter,
     validate_status,
 )
+from hivemind.core.paths import linked_path_for, task_dir
 
 _log = logging.getLogger(__name__)
 
@@ -61,20 +62,18 @@ _INDEX_FIELDS: list[str] = [
 ]
 
 
-def _index_path(data_path: Path, project: str) -> Path:
-    """Return the path to a project's task index file."""
-    return data_path / "tasks" / project / "_index.json"
+def _index_path(tasks_dir: Path) -> Path:
+    """Return the path to ``_index.json`` inside *tasks_dir*."""
+    return tasks_dir / "_index.json"
 
 
-def _load_task_index(
-    data_path: Path, project: str
-) -> dict[str, Any] | None:
-    """Load ``_index.json`` for *project*.
+def _load_task_index(tasks_dir: Path) -> dict[str, Any] | None:
+    """Load ``_index.json`` from *tasks_dir*.
 
     Returns the parsed dict or ``None`` if the file is missing, corrupt,
     or has an incompatible version.
     """
-    path = _index_path(data_path, project)
+    path = _index_path(tasks_dir)
     try:
         raw = path.read_text(encoding="utf-8")
         data: dict[str, Any] = json.loads(raw)
@@ -88,11 +87,9 @@ def _load_task_index(
         return None
 
 
-def _save_task_index(
-    data_path: Path, project: str, index_data: dict[str, Any]
-) -> None:
-    """Write *index_data* to ``_index.json``."""
-    path = _index_path(data_path, project)
+def _save_task_index(tasks_dir: Path, index_data: dict[str, Any]) -> None:
+    """Write *index_data* to ``_index.json`` inside *tasks_dir*."""
+    path = _index_path(tasks_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(index_data, indent=2, default=str) + "\n",
@@ -115,15 +112,12 @@ def _fm_to_index_entry(fm: dict[str, object]) -> dict[str, object]:
     return entry
 
 
-def _rebuild_task_index(
-    data_path: Path, project: str
-) -> dict[str, Any]:
-    """Scan all ``.md`` files for *project* and build a fresh index."""
-    project_dir = data_path / "tasks" / project
+def _rebuild_task_index(tasks_dir: Path) -> dict[str, Any]:
+    """Scan all ``.md`` files in *tasks_dir* and build a fresh index."""
     tasks: dict[str, dict[str, object]] = {}
 
-    if project_dir.exists():
-        for md_file in sorted(project_dir.glob("*.md")):
+    if tasks_dir.exists():
+        for md_file in sorted(tasks_dir.glob("*.md")):
             if md_file.name.startswith("_"):
                 continue
             try:
@@ -138,24 +132,23 @@ def _rebuild_task_index(
         "version": _INDEX_VERSION,
         "tasks": tasks,
     }
-    _save_task_index(data_path, project, index_data)
+    _save_task_index(tasks_dir, index_data)
     return index_data
 
 
 def _update_task_index_entry(
-    data_path: Path,
-    project: str,
+    tasks_dir: Path,
     task_id: str,
     fm_dict: dict[str, object],
 ) -> None:
     """Update a single entry in the index, creating the index if needed."""
-    index_data = _load_task_index(data_path, project)
+    index_data = _load_task_index(tasks_dir)
     if index_data is None:
-        index_data = _rebuild_task_index(data_path, project)
+        _rebuild_task_index(tasks_dir)
         return  # rebuild already includes the new/updated entry
 
     index_data["tasks"][task_id] = _fm_to_index_entry(fm_dict)
-    _save_task_index(data_path, project, index_data)
+    _save_task_index(tasks_dir, index_data)
 
 
 def _find_config() -> tuple[HivemindConfig, Path]:
@@ -186,36 +179,69 @@ def _find_project_by_cwd(cfg: HivemindConfig) -> str | None:
     return None
 
 
-def _find_task_file(data_path: Path, task_id: str) -> Path:
-    """Find a task markdown file by its ID across all project dirs."""
-    tasks_root = data_path / "tasks"
-    if not tasks_root.exists():
-        raise click.ClickException(f"Tasks directory not found: {tasks_root}")
+def _project_tasks_dir(cfg: HivemindConfig, project: str) -> Path:
+    """Return ``<linked_path>/hivemind/tasks`` for *project* (v5)."""
+    return task_dir(linked_path_for(cfg, project))
 
-    for project_dir in tasks_root.iterdir():
-        if not project_dir.is_dir():
+
+def _iter_project_task_dirs(
+    cfg: HivemindConfig, project: str | None = None
+) -> list[tuple[str, Path]]:
+    """Yield (project_name, tasks_dir) for registered projects.
+
+    When *project* is given, restrict to that one. Skips projects without a
+    valid ``linked_path``.
+    """
+    projects = cfg.raw.get("projects", {})
+    if not isinstance(projects, dict):
+        return []
+
+    out: list[tuple[str, Path]] = []
+    for name, proj in projects.items():
+        if project is not None and name != project:
             continue
-        candidate = project_dir / f"{task_id}.md"
+        if not isinstance(proj, dict):
+            continue
+        linked = proj.get("linked_path")
+        if not isinstance(linked, str) or not linked:
+            continue
+        out.append((name, task_dir(Path(linked).expanduser())))
+    return out
+
+
+def _find_task_file(cfg: HivemindConfig, task_id: str) -> Path:
+    """Find a task markdown file by its ID across all registered projects."""
+    for _name, tasks_dir in _iter_project_task_dirs(cfg):
+        candidate = tasks_dir / f"{task_id}.md"
         if candidate.exists():
             return candidate
 
     raise click.ClickException(f"Task not found: {task_id}")
 
 
+def _find_task_with_project(
+    cfg: HivemindConfig, task_id: str
+) -> tuple[Path, str, Path]:
+    """Return (task_path, project_name, tasks_dir) for a task ID."""
+    for name, tasks_dir in _iter_project_task_dirs(cfg):
+        candidate = tasks_dir / f"{task_id}.md"
+        if candidate.exists():
+            return candidate, name, tasks_dir
+    raise click.ClickException(f"Task not found: {task_id}")
+
+
 def _scan_tasks_from_index(
-    data_path: Path,
-    project: str,
+    tasks_dir: Path,
 ) -> list[tuple[dict[str, object], str, Path]] | None:
     """Try to build the scan result from the index for one project.
 
     Returns ``None`` if the index is unavailable and a full scan is needed.
     Body is always ``""`` because the index does not store bodies.
     """
-    index_data = _load_task_index(data_path, project)
+    index_data = _load_task_index(tasks_dir)
     if index_data is None:
         return None
 
-    tasks_dir = data_path / "tasks" / project
     results: list[tuple[dict[str, object], str, Path]] = []
     for task_id, entry in index_data["tasks"].items():
         fm: dict[str, object] = {"id": task_id, **entry}
@@ -225,7 +251,6 @@ def _scan_tasks_from_index(
 
 
 def _scan_tasks_glob(
-    data_path: Path,
     dirs: list[Path],
 ) -> list[tuple[dict[str, object], str, Path]]:
     """Original glob+parse fallback for scanning task files."""
@@ -245,7 +270,7 @@ def _scan_tasks_glob(
 
 
 def _scan_tasks(
-    data_path: Path,
+    cfg: HivemindConfig,
     project: str | None = None,
 ) -> list[tuple[dict[str, object], str, Path]]:
     """Scan task files and return list of (frontmatter, body, path).
@@ -253,29 +278,19 @@ def _scan_tasks(
     Reads from ``_index.json`` when available for better performance.
     Falls back to glob+parse and rebuilds the index on a miss.
     """
-    tasks_root = data_path / "tasks"
-    if not tasks_root.exists():
-        return []
-
-    if project:
-        dirs = [tasks_root / project]
-    else:
-        dirs = [d for d in tasks_root.iterdir() if d.is_dir()]
-
     results: list[tuple[dict[str, object], str, Path]] = []
 
-    for d in dirs:
-        if not d.exists():
+    for _name, tasks_dir in _iter_project_task_dirs(cfg, project):
+        if not tasks_dir.exists():
             continue
-        proj_name = d.name
-        indexed = _scan_tasks_from_index(data_path, proj_name)
+        indexed = _scan_tasks_from_index(tasks_dir)
         if indexed is not None:
             results.extend(indexed)
         else:
             # Fallback: glob+parse, then rebuild index for next time
-            scanned = _scan_tasks_glob(data_path, [d])
+            scanned = _scan_tasks_glob([tasks_dir])
             results.extend(scanned)
-            _rebuild_task_index(data_path, proj_name)
+            _rebuild_task_index(tasks_dir)
 
     return results
 
@@ -286,10 +301,10 @@ def _scan_tasks(
 
 
 def _load_all_tasks(
-    data_path: Path, project: str | None = None
+    cfg: HivemindConfig, project: str | None = None
 ) -> list[dict[str, object]]:
     """Load all tasks as a flat list of frontmatter dicts."""
-    scanned = _scan_tasks(data_path, project)
+    scanned = _scan_tasks(cfg, project)
     return [fm for fm, _body, _path in scanned]
 
 
@@ -310,7 +325,7 @@ def _build_tree(
 
 
 def _auto_complete_parents(
-    data_path: Path,
+    cfg: HivemindConfig,
     task_fm: dict[str, object],
     all_tasks: list[dict[str, object]],
 ) -> None:
@@ -352,7 +367,7 @@ def _auto_complete_parents(
         else "done"
     )
 
-    parent_path = _find_task_file(data_path, parent_id)
+    parent_path, _proj, parent_tasks_dir = _find_task_with_project(cfg, parent_id)
     today = date.today().isoformat()
     now_iso = datetime.now().isoformat()
     update_frontmatter(
@@ -360,16 +375,15 @@ def _auto_complete_parents(
         {"status": new_status, "updated": today, "completed_at": now_iso},
     )
 
-    project_name = parent_path.parent.name
     parent_fm_fresh, _ = parse_task(parent_path)
-    _update_task_index_entry(data_path, project_name, parent_id, parent_fm_fresh)
+    _update_task_index_entry(parent_tasks_dir, parent_id, parent_fm_fresh)
 
     parent_type = str(parent_fm.get("type", ""))
     click.echo(f"Auto-completed: {parent_id} [{parent_type}] -> {new_status}")
 
     parent_fm["status"] = new_status
 
-    _auto_complete_parents(data_path, parent_fm, all_tasks)
+    _auto_complete_parents(cfg, parent_fm, all_tasks)
 
 
 def _validate_parent_hierarchy(
@@ -554,7 +568,7 @@ def create(
     parent_id: str | None,
 ) -> None:
     """Create a new task."""
-    cfg, data_path = _find_config()
+    cfg, _data_path = _find_config()
 
     proj_cfg = cfg.get_project(project)
     if proj_cfg is None:
@@ -563,15 +577,19 @@ def create(
             "Add it with `hv init` or update .hivemind.json."
         )
 
+    try:
+        linked_path = linked_path_for(cfg, project)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
     # Validate parent hierarchy
-    all_tasks = _load_all_tasks(data_path)
+    all_tasks = _load_all_tasks(cfg)
     _validate_parent_hierarchy(task_type, parent_id, all_tasks)
 
     prefix: str = proj_cfg.get("prefix", project.upper())
     legacy_counter = int(proj_cfg.get("counter", 0) or 0)
     task_id = next_task_id(
-        data_path,
-        project,
+        linked_path,
         prefix,
         legacy_counter=legacy_counter,
     )
@@ -591,13 +609,14 @@ def create(
     if parent_id:
         fm["parent"] = parent_id
 
-    task_path = data_path / "tasks" / project / f"{task_id}.md"
+    tasks_dir = task_dir(linked_path)
+    task_path = tasks_dir / f"{task_id}.md"
     create_task_file(task_path, fm, "")
 
     # Update task index
-    _update_task_index_entry(data_path, project, task_id, fm)
+    _update_task_index_entry(tasks_dir, task_id, fm)
 
-    auto_commit(data_path, f"task: create {task_id}")
+    auto_commit(linked_path, f"task: create {task_id}")
 
     click.echo(f"Created task: {task_id}")
     click.echo(f"  Title: {title}")
@@ -641,7 +660,7 @@ def list_cmd(
     if status is not None:
         validate_status(status)
 
-    cfg, data_path = _find_config()
+    cfg, _data_path = _find_config()
 
     if all_projects:
         scan_project = None
@@ -657,7 +676,7 @@ def list_cmd(
                 "Use --project/-p to specify, or --all-projects to show all."
             )
 
-    tasks = _scan_tasks(data_path, scan_project)
+    tasks = _scan_tasks(cfg, scan_project)
 
     if status is not None:
         tasks = [t for t in tasks if t[0].get("status") == status]
@@ -742,12 +761,12 @@ def list_cmd(
 )
 def get(task_id: str, fmt: str) -> None:
     """Get details for a specific task."""
-    _cfg, data_path = _find_config()
-    task_path = _find_task_file(data_path, task_id)
+    cfg, _data_path = _find_config()
+    task_path = _find_task_file(cfg, task_id)
     fm, body = parse_task(task_path)
 
     # Load parent chain
-    all_tasks = _load_all_tasks(data_path)
+    all_tasks = _load_all_tasks(cfg)
     parent_chain = _get_parent_chain(fm, all_tasks)
 
     if fmt == "json":
@@ -802,8 +821,9 @@ def update(
     reason: str | None,
 ) -> None:
     """Update an existing task."""
-    _cfg, data_path = _find_config()
-    task_path = _find_task_file(data_path, task_id)
+    cfg, _data_path = _find_config()
+    task_path, _project_name, tasks_dir = _find_task_with_project(cfg, task_id)
+    linked_path = tasks_dir.parent.parent  # <linked>/hivemind/tasks -> <linked>
 
     updates: dict[str, object] = {}
     if status is not None:
@@ -826,12 +846,10 @@ def update(
 
     update_frontmatter(task_path, updates)
 
-    # Update task index — the project name is the parent directory name
-    project_name = task_path.parent.name
     fm_after, _body_after = parse_task(task_path)
-    _update_task_index_entry(data_path, project_name, task_id, fm_after)
+    _update_task_index_entry(tasks_dir, task_id, fm_after)
 
-    auto_commit(data_path, f"task: update {task_id}")
+    auto_commit(linked_path, f"task: update {task_id}")
 
     click.echo(f"Updated task: {task_id}")
     for key, value in updates.items():
@@ -840,7 +858,7 @@ def update(
     # Auto-complete parents when this task reaches a terminal status.
     if status in _TERMINAL_STATUSES:
         fm = fm_after
-        all_tasks = _load_all_tasks(data_path)
+        all_tasks = _load_all_tasks(cfg)
 
         # Update the in-memory copy so sibling check uses current state
         for t in all_tasks:
@@ -848,15 +866,15 @@ def update(
                 t["status"] = status
                 break
 
-        _auto_complete_parents(data_path, fm, all_tasks)
+        _auto_complete_parents(cfg, fm, all_tasks)
 
 
 @task.command(name="next")
 @click.option("--project", "-p", default=None, help="Filter by project.")
 def next_cmd(project: str | None) -> None:
     """Get the next task to work on (leaf tasks only)."""
-    _cfg, data_path = _find_config()
-    all_tasks = _scan_tasks(data_path, project)
+    cfg, _data_path = _find_config()
+    all_tasks = _scan_tasks(cfg, project)
 
     # Build status lookup: id -> status
     status_map: dict[str, str] = {}

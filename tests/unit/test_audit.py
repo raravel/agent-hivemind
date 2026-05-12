@@ -88,7 +88,12 @@ def _create_task_with_fm(
     status: str = "pending",
     updated: str | None = None,
 ) -> Path:
-    """Create a task file with given frontmatter."""
+    """Create a task file under the v5 location ``<linked>/hivemind/tasks/``.
+
+    The ``project`` arg is retained for call-site clarity; the location is
+    derived from the standard fixture (linked_path = ``data_path.parent/code``).
+    """
+    del project  # noqa: F841 — kept for call-site clarity
     if updated is None:
         updated = date.today().isoformat()
     fm: dict[str, object] = {
@@ -100,7 +105,8 @@ def _create_task_with_fm(
         "created": updated,
         "updated": updated,
     }
-    task_path = data_path / "tasks" / project / f"{task_id}.md"
+    linked_path = data_path.parent / "code"
+    task_path = linked_path / "hivemind" / "tasks" / f"{task_id}.md"
     create_task_file(task_path, fm, "")
     return task_path
 

@@ -108,7 +108,8 @@ class TestLinkProject:
         finally:
             os.chdir(old_cwd)
 
-        link_file = project_dir / ".hivemind-link.json"
+        # v5 link file location is <project_dir>/hivemind/link.json
+        link_file = project_dir / "hivemind" / "link.json"
         assert link_file.exists()
         link_data = json.loads(link_file.read_text(encoding="utf-8"))
         assert link_data == {"project": "testproj", "prefix": "TES"}
@@ -136,9 +137,10 @@ class TestLinkProject:
         finally:
             os.chdir(old_cwd)
 
-        assert (data_path / "projects" / "testproj").is_dir()
-        assert (data_path / "tasks" / "testproj").is_dir()
-        assert (data_path / "tasks" / "testproj" / "_reports").is_dir()
+        # v5: project-local dirs live in <linked>/hivemind/; level3 stays in data
+        assert (project_dir / "hivemind" / "docs").is_dir()
+        assert (project_dir / "hivemind" / "tasks").is_dir()
+        assert (project_dir / "hivemind" / "tasks" / "_reports").is_dir()
         assert (data_path / "level3" / "testproj").is_dir()
 
     def test_registers_in_config(self, tmp_path: Path) -> None:
@@ -171,9 +173,10 @@ class TestLinkProject:
     def test_refresh_preserves_project_and_prefix(self, tmp_path: Path) -> None:
         project_dir, data_path = self._setup_workspace(tmp_path)
 
-        # Pre-create v4-shaped link file with an explicit prefix.
-        link_file = project_dir / ".hivemind-link.json"
-        link_file.write_text(
+        # Pre-create legacy link file with an explicit prefix. Re-link migrates
+        # to the v5 location at <project_dir>/hivemind/link.json.
+        legacy_link = project_dir / ".hivemind-link.json"
+        legacy_link.write_text(
             json.dumps({"project": "existing", "prefix": "EXI"}),
             encoding="utf-8",
         )
@@ -194,8 +197,11 @@ class TestLinkProject:
 
         # Project name from the existing link wins over the explicit --name arg.
         assert result == "existing"
-        refreshed = json.loads(link_file.read_text(encoding="utf-8"))
+        new_link = project_dir / "hivemind" / "link.json"
+        refreshed = json.loads(new_link.read_text(encoding="utf-8"))
         assert refreshed == {"project": "existing", "prefix": "EXI"}
+        # Legacy link file should be removed after migration.
+        assert not legacy_link.exists()
         cfg_data = json.loads(
             (data_path / ".hivemind.json").read_text(encoding="utf-8")
         )
@@ -205,9 +211,10 @@ class TestLinkProject:
     def test_refresh_drops_legacy_v3_fields(self, tmp_path: Path) -> None:
         project_dir, data_path = self._setup_workspace(tmp_path)
 
-        # Pre-create a v3-shaped link file (data_path + targets, no prefix).
-        link_file = project_dir / ".hivemind-link.json"
-        link_file.write_text(
+        # Pre-create a legacy v3-shaped link file (data_path + targets, no
+        # prefix). Re-link should migrate to v5 location and drop legacy fields.
+        legacy_link = project_dir / ".hivemind-link.json"
+        legacy_link.write_text(
             json.dumps(
                 {
                     "project": "legacy",
@@ -232,12 +239,15 @@ class TestLinkProject:
         finally:
             os.chdir(old_cwd)
 
-        refreshed = json.loads(link_file.read_text(encoding="utf-8"))
+        new_link = project_dir / "hivemind" / "link.json"
+        refreshed = json.loads(new_link.read_text(encoding="utf-8"))
         assert refreshed["project"] == "legacy"
         # Prefix is auto-generated since the v3 link had none.
         assert refreshed["prefix"] == "LEG"
         assert "data_path" not in refreshed
         assert "targets" not in refreshed
+        # Legacy link file is removed after migration.
+        assert not legacy_link.exists()
 
     def test_writes_managed_blocks(self, tmp_path: Path) -> None:
         project_dir, data_path = self._setup_workspace(tmp_path)

@@ -12,7 +12,7 @@ import frontmatter
 
 from hivemind.commands.audit import _find_config
 from hivemind.core.harness_quality import RUBRIC_VERSION, load_scores
-from hivemind.core.paths import linked_path_for
+from hivemind.core.paths import linked_path_for, task_dir
 
 
 def _parse_report(path: Path) -> dict[str, object] | None:
@@ -28,16 +28,15 @@ def _parse_report(path: Path) -> dict[str, object] | None:
 
 
 def _collect_reports(
-    data_path: Path,
-    project: str,
+    linked_path: Path,
     since: datetime | None = None,
 ) -> list[dict[str, object]]:
-    """Scan tasks/{project}/_reports/*.md and return parsed frontmatter dicts.
+    """Scan ``<linked>/hivemind/tasks/_reports/*.md`` and return frontmatter dicts.
 
     If *since* is given, only reports whose ``completed_at`` >= *since* are
     included.
     """
-    reports_dir = data_path / "tasks" / project / "_reports"
+    reports_dir = task_dir(linked_path) / "_reports"
     if not reports_dir.exists():
         return []
 
@@ -233,7 +232,11 @@ def run_stats(project: str, since: str | None = None) -> str:
 
     Separated from the Click command for testability.
     """
-    _cfg, data_path = _find_config()
+    cfg, _data_path = _find_config()
+    try:
+        linked_path = linked_path_for(cfg, project)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     since_dt: datetime | None = None
     if since is not None:
@@ -244,7 +247,7 @@ def run_stats(project: str, since: str | None = None) -> str:
                 f"Invalid --since date: '{since}'. Use ISO format (YYYY-MM-DD)."
             ) from exc
 
-    reports = _collect_reports(data_path, project, since_dt)
+    reports = _collect_reports(linked_path, since_dt)
     if not reports:
         return "No execution reports found"
 

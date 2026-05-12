@@ -233,8 +233,8 @@ class TestNoTasksAvailable:
         _make_workspace(
             tmp_path,
             projects={
-                "myproj": {"prefix": "MP", "linked_path": "/tmp/myproj", "counter": 0},
-                "other": {"prefix": "OT", "linked_path": "/tmp/other", "counter": 0},
+                "myproj": {"prefix": "MP", "linked_path": str(tmp_path / "myproj"), "counter": 0},
+                "other": {"prefix": "OT", "linked_path": str(tmp_path / "other"), "counter": 0},
             },
         )
         _invoke_task(tmp_path, ["create", "-p", "myproj", "-t", "A task"])
@@ -309,7 +309,7 @@ class TestProjectAutoDetect:
                 },
                 "other": {
                     "prefix": "OT",
-                    "linked_path": "/tmp/other",
+                    "linked_path": str(tmp_path / "other"),
                     "counter": 0,
                 },
             },
@@ -329,7 +329,7 @@ class TestProjectAutoDetect:
             projects={
                 "myproj": {
                     "prefix": "MP",
-                    "linked_path": "/tmp/elsewhere",
+                    "linked_path": str(tmp_path / "elsewhere"),
                     "counter": 0,
                 }
             },
@@ -344,12 +344,12 @@ class TestProjectAutoDetect:
             projects={
                 "myproj": {
                     "prefix": "MP",
-                    "linked_path": "/tmp/elsewhere",
+                    "linked_path": str(tmp_path / "elsewhere"),
                     "counter": 0,
                 },
                 "other": {
                     "prefix": "OT",
-                    "linked_path": "/tmp/other",
+                    "linked_path": str(tmp_path / "other"),
                     "counter": 0,
                 },
             },
@@ -371,7 +371,7 @@ class TestProjectAutoDetect:
                 },
                 "other": {
                     "prefix": "OT",
-                    "linked_path": "/tmp/other",
+                    "linked_path": str(tmp_path / "other"),
                     "counter": 0,
                 },
             },

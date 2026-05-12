@@ -91,10 +91,11 @@ def _extract_referenced_modules(spec_path: Path) -> list[str]:
 
 
 def _load_tasks(
-    data_path: Path, project: str
+    linked_path: Path,
 ) -> list[tuple[dict[str, object], str, Path]]:
-    """Load task files for a project."""
-    tasks_root = data_path / "tasks" / project
+    """Load task files for a linked project (v5: ``<linked>/hivemind/tasks``)."""
+    from hivemind.core.paths import task_dir
+    tasks_root = task_dir(linked_path)
     if not tasks_root.exists():
         return []
     results: list[tuple[dict[str, object], str, Path]] = []
@@ -426,7 +427,7 @@ def run_audit(
                 spec_without_code.append((rel_spec, ref))
 
     # Step 5: Stale tasks
-    tasks = _load_tasks(data_path, project)
+    tasks = _load_tasks(linked_path_obj)
     stale_tasks = _find_stale_tasks(tasks)
 
     # Step 6: Build report

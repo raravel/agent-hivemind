@@ -141,10 +141,13 @@ def main() -> None:
     event = str(data.get("hook_event_name") or "")
     cwd = Path(str(data.get("cwd") or Path.cwd()))
 
-    link_file = cwd / ".hivemind-link.json"
+    link_file = cwd / "hivemind" / "link.json"
     if not link_file.exists():
-        _approve()
-        return
+        legacy = cwd / ".hivemind-link.json"
+        if not legacy.exists():
+            _approve()
+            return
+        link_file = legacy
 
     try:
         link = json.loads(link_file.read_text(encoding="utf-8"))

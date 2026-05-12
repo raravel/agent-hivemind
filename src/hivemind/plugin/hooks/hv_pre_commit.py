@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """PreToolUse hook (Bash matcher).
 
-Intercepts ``git commit`` calls. When the cwd has a ``.hivemind-link.json``,
-injects a spec-sync reminder listing the staged files so the agent remembers
-to update harness docs.
+Intercepts ``git commit`` calls. When the cwd contains a hivemind link file
+(v5: ``hivemind/link.json``; legacy: ``.hivemind-link.json``), injects a
+spec-sync reminder listing the staged files so the agent remembers to update
+harness docs.
 
 Input:  JSON on stdin: ``{tool_name, tool_input, cwd, ...}``
 Output: JSON on stdout: ``{status: "approve", additionalContext?}``
@@ -52,10 +53,13 @@ def main() -> None:
         return
 
     cwd = Path(str(data.get("cwd") or Path.cwd()))
-    link_file = cwd / ".hivemind-link.json"
+    link_file = cwd / "hivemind" / "link.json"
     if not link_file.exists():
-        _approve()
-        return
+        legacy = cwd / ".hivemind-link.json"
+        if not legacy.exists():
+            _approve()
+            return
+        link_file = legacy
 
     try:
         link = json.loads(link_file.read_text(encoding="utf-8"))

@@ -191,12 +191,14 @@ def _check_codex_plugin_installed() -> CheckResult:
 
 
 def _check_project_link(project_dir: Path) -> tuple[CheckResult, dict[str, Any] | None]:
-    link_file = project_dir / ".hivemind-link.json"
-    if not link_file.exists():
+    from hivemind.core.paths import resolve_link_file
+
+    link_file = resolve_link_file(project_dir)
+    if link_file is None:
         return (
             _warn(
                 "Project link",
-                f"{project_dir} is not linked (no .hivemind-link.json) — run `hv link`",
+                f"{project_dir} is not linked (no hivemind/link.json) — run `hv link`",
             ),
             None,
         )

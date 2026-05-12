@@ -36,7 +36,7 @@ def _make_workspace(
         projects = {
             "myproj": {
                 "prefix": "MP",
-                "linked_path": "/tmp/myproj",
+                "linked_path": str(tmp_path / "myproj"),
                 "counter": 0,
             }
         }
@@ -64,6 +64,11 @@ def _invoke(tmp_path: Path, args: list[str]) -> Any:
         os.chdir(old_cwd)
 
 
+def _tasks_dir(tmp_path: Path, project: str = "myproj") -> Path:
+    """v5 tasks dir: ``<linked_path>/hivemind/tasks`` for the standard fixture."""
+    return tmp_path / project / "hivemind" / "tasks"
+
+
 class TestCreate:
     """Tests for `hv task create`."""
 
@@ -78,7 +83,7 @@ class TestCreate:
         assert result.exit_code == 0, result.output
         assert "MP-001" in result.output
 
-        counter_file = data_path / "tasks" / "myproj" / "_counter.json"
+        counter_file = _tasks_dir(tmp_path) / "_counter.json"
         assert counter_file.exists()
         assert json.loads(counter_file.read_text(encoding="utf-8"))["value"] == 1
 
@@ -118,7 +123,7 @@ class TestCreate:
         )
         assert result.exit_code == 0, result.output
 
-        task_file = data_path / "tasks" / "myproj" / "MP-001.md"
+        task_file = _tasks_dir(tmp_path) / "MP-001.md"
         assert task_file.exists()
 
         fm, body = parse_task(task_file)
@@ -184,14 +189,21 @@ class TestList:
         assert "MP-001" not in result.output
 
     def test_auto_detects_project_from_cwd(self, tmp_path: Path) -> None:
-        _config_path, _data_path = _make_workspace(tmp_path)
-        self._create_tasks(tmp_path)
-
+        # Point linked_path at a fresh dir BEFORE creating tasks so v5 tasks
+        # live under that linked_path.
         linked = tmp_path / "myproj_linked"
         linked.mkdir()
-        cfg = json.loads(_config_path.read_text(encoding="utf-8"))
-        cfg["projects"]["myproj"]["linked_path"] = str(linked)
-        _config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+        _config_path, _data_path = _make_workspace(
+            tmp_path,
+            projects={
+                "myproj": {
+                    "prefix": "MP",
+                    "linked_path": str(linked),
+                    "counter": 0,
+                }
+            },
+        )
+        self._create_tasks(tmp_path)
 
         import shutil
         shutil.copy2(str(_config_path), str(linked / ".hivemind.json"))
@@ -365,7 +377,7 @@ class TestUpdate:
         assert result.exit_code == 0, result.output
         assert "Updated" in result.output or "in_progress" in result.output
 
-        task_file = data_path / "tasks" / "myproj" / "MP-001.md"
+        task_file = _tasks_dir(tmp_path) / "MP-001.md"
         fm, _body = parse_task(task_file)
         assert fm["status"] == "in_progress"
         assert fm["title"] == "Updated"
@@ -381,7 +393,7 @@ class TestUpdate:
         )
         assert result.exit_code == 0, result.output
 
-        task_file = data_path / "tasks" / "myproj" / "MP-001.md"
+        task_file = _tasks_dir(tmp_path) / "MP-001.md"
         fm, _body = parse_task(task_file)
         assert fm["status"] == "done"
         assert "completed_at" in fm
@@ -468,31 +480,30 @@ class TestTaskIndex:
     """Tests for _index.json task index helpers."""
 
     def test_load_returns_none_when_missing(self, tmp_path: Path) -> None:
-        data_path = tmp_path / "data"
-        data_path.mkdir()
-        (data_path / "tasks" / "proj").mkdir(parents=True)
-        assert _load_task_index(data_path, "proj") is None
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir(parents=True)
+        assert _load_task_index(tasks_dir) is None
 
     def test_load_returns_none_on_bad_json(self, tmp_path: Path) -> None:
-        data_path = tmp_path / "data"
-        idx = data_path / "tasks" / "proj" / "_index.json"
+        tasks_dir = tmp_path / "tasks"
+        idx = tasks_dir / "_index.json"
         idx.parent.mkdir(parents=True)
         idx.write_text("NOT JSON", encoding="utf-8")
-        assert _load_task_index(data_path, "proj") is None
+        assert _load_task_index(tasks_dir) is None
 
     def test_load_returns_none_on_version_mismatch(self, tmp_path: Path) -> None:
-        data_path = tmp_path / "data"
-        idx = data_path / "tasks" / "proj" / "_index.json"
+        tasks_dir = tmp_path / "tasks"
+        idx = tasks_dir / "_index.json"
         idx.parent.mkdir(parents=True)
         idx.write_text(
             json.dumps({"version": 999, "tasks": {}}),
             encoding="utf-8",
         )
-        assert _load_task_index(data_path, "proj") is None
+        assert _load_task_index(tasks_dir) is None
 
     def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
-        data_path = tmp_path / "data"
-        (data_path / "tasks" / "proj").mkdir(parents=True)
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir(parents=True)
         index_data: dict[str, Any] = {
             "version": 1,
             "tasks": {
@@ -507,8 +518,8 @@ class TestTaskIndex:
                 },
             },
         }
-        _save_task_index(data_path, "proj", index_data)
-        loaded = _load_task_index(data_path, "proj")
+        _save_task_index(tasks_dir, index_data)
+        loaded = _load_task_index(tasks_dir)
         assert loaded is not None
         assert loaded["tasks"]["P-001"]["status"] == "pending"
 
@@ -543,17 +554,18 @@ class TestTaskIndex:
         assert entry["parent"] is None
 
     def test_rebuild_creates_index(self, tmp_path: Path) -> None:
-        _config_path, data_path = _make_workspace(tmp_path)
+        _config_path, _data_path = _make_workspace(tmp_path)
         # Create two tasks via CLI
         _invoke(tmp_path, ["create", "-p", "myproj", "-t", "First"])
         _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Second"])
 
         # Delete existing index to force rebuild
-        idx_path = data_path / "tasks" / "myproj" / "_index.json"
+        tasks_dir = _tasks_dir(tmp_path)
+        idx_path = tasks_dir / "_index.json"
         if idx_path.exists():
             idx_path.unlink()
 
-        index_data = _rebuild_task_index(data_path, "myproj")
+        index_data = _rebuild_task_index(tasks_dir)
         assert "MP-001" in index_data["tasks"]
         assert "MP-002" in index_data["tasks"]
         assert index_data["tasks"]["MP-001"]["title"] == "First"
@@ -563,17 +575,17 @@ class TestTaskIndex:
         assert idx_path.exists()
 
     def test_update_entry_creates_index_if_missing(self, tmp_path: Path) -> None:
-        _config_path, data_path = _make_workspace(tmp_path)
+        _config_path, _data_path = _make_workspace(tmp_path)
         _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Task"])
 
         # Remove the index that create built
-        idx_path = data_path / "tasks" / "myproj" / "_index.json"
+        tasks_dir = _tasks_dir(tmp_path)
+        idx_path = tasks_dir / "_index.json"
         if idx_path.exists():
             idx_path.unlink()
 
         _update_task_index_entry(
-            data_path,
-            "myproj",
+            tasks_dir,
             "MP-001",
             {
                 "status": "in_progress",
@@ -584,7 +596,7 @@ class TestTaskIndex:
             },
         )
 
-        loaded = _load_task_index(data_path, "myproj")
+        loaded = _load_task_index(tasks_dir)
         assert loaded is not None
         assert "MP-001" in loaded["tasks"]
 
@@ -596,7 +608,7 @@ class TestTaskIndex:
         )
         assert result.exit_code == 0, result.output
 
-        loaded = _load_task_index(data_path, "myproj")
+        loaded = _load_task_index(_tasks_dir(tmp_path))
         assert loaded is not None
         assert "MP-001" in loaded["tasks"]
         assert loaded["tasks"]["MP-001"]["title"] == "Indexed task"
@@ -612,7 +624,7 @@ class TestTaskIndex:
         )
         assert result.exit_code == 0, result.output
 
-        loaded = _load_task_index(data_path, "myproj")
+        loaded = _load_task_index(_tasks_dir(tmp_path))
         assert loaded is not None
         assert loaded["tasks"]["MP-001"]["status"] == "in_progress"
 
@@ -634,7 +646,7 @@ class TestTaskIndex:
         _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Fallback"])
 
         # Delete the index
-        idx_path = data_path / "tasks" / "myproj" / "_index.json"
+        idx_path = _tasks_dir(tmp_path) / "_index.json"
         if idx_path.exists():
             idx_path.unlink()
 
@@ -645,7 +657,7 @@ class TestTaskIndex:
 
         # And the index should have been rebuilt
         assert idx_path.exists()
-        loaded = _load_task_index(data_path, "myproj")
+        loaded = _load_task_index(_tasks_dir(tmp_path))
         assert loaded is not None
         assert "MP-001" in loaded["tasks"]
 
@@ -654,7 +666,7 @@ class TestTaskIndex:
         _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Corrupt test"])
 
         # Corrupt the index
-        idx_path = data_path / "tasks" / "myproj" / "_index.json"
+        idx_path = _tasks_dir(tmp_path) / "_index.json"
         idx_path.write_text("{{bad json}}", encoding="utf-8")
 
         # list should still work
@@ -663,7 +675,7 @@ class TestTaskIndex:
         assert "MP-001" in result.output
 
         # Index should be rebuilt and valid now
-        loaded = _load_task_index(data_path, "myproj")
+        loaded = _load_task_index(_tasks_dir(tmp_path))
         assert loaded is not None
 
     def test_index_schema_matches_spec(self, tmp_path: Path) -> None:
@@ -677,7 +689,7 @@ class TestTaskIndex:
             ],
         )
 
-        idx_path = data_path / "tasks" / "myproj" / "_index.json"
+        idx_path = _tasks_dir(tmp_path) / "_index.json"
         raw = json.loads(idx_path.read_text(encoding="utf-8"))
 
         assert raw["version"] == 1

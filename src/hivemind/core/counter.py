@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from types import TracebackType
 
+from hivemind.core.paths import task_dir
+
 
 _COUNTER_FILENAME = "_counter.json"
 _LOCK_FILENAME = "_counter.lock"
@@ -92,14 +94,14 @@ class _CounterLock:
         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
 
 
-def _counter_path(data_path: Path, project: str) -> Path:
-    """Return the per-project counter path."""
-    return data_path / "tasks" / project / _COUNTER_FILENAME
+def _counter_path(linked_path: Path) -> Path:
+    """Return the per-project counter path (v5 layout)."""
+    return task_dir(linked_path) / _COUNTER_FILENAME
 
 
-def _lock_path(data_path: Path, project: str) -> Path:
-    """Return the per-project counter lock path."""
-    return data_path / "tasks" / project / _LOCK_FILENAME
+def _lock_path(linked_path: Path) -> Path:
+    """Return the per-project counter lock path (v5 layout)."""
+    return task_dir(linked_path) / _LOCK_FILENAME
 
 
 def _valid_counter(value: object) -> bool:
@@ -147,14 +149,13 @@ def _write_counter(counter_path: Path, value: int) -> None:
 
 
 def next_task_id(
-    data_path: Path,
-    project: str,
+    linked_path: Path,
     prefix: str,
     legacy_counter: int = 0,
 ) -> str:
     """Return the next task ID and persist the incremented counter."""
-    with _CounterLock(_lock_path(data_path, project)):
-        counter_path = _counter_path(data_path, project)
+    with _CounterLock(_lock_path(linked_path)):
+        counter_path = _counter_path(linked_path)
         # legacy_counter is consulted only when the per-project counter file
         # is absent/invalid. Once _counter.json exists, it is the source of
         # truth; manual edits to global config no longer move the counter.

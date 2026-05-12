@@ -459,18 +459,18 @@ class TestDraftStorage:
     """Tests for draft file load/save."""
 
     def test_draft_path_shape(self, tmp_path: Path) -> None:
-        p = _draft_path(tmp_path, "demo", "PRJ-003")
+        p = _draft_path(tmp_path, "PRJ-003")
         assert p.name == "PRJ-003-lessons-draft.json"
         assert "_reports" in p.parts
 
     def test_load_empty_returns_default(self, tmp_path: Path) -> None:
-        p = _draft_path(tmp_path, "demo", "PRJ-001")
+        p = _draft_path(tmp_path, "PRJ-001")
         data = _load_draft_file(p)
         assert data["drafts"] == []
         assert data["task_id"] == "PRJ-001"
 
     def test_roundtrip(self, tmp_path: Path) -> None:
-        p = _draft_path(tmp_path, "demo", "PRJ-001")
+        p = _draft_path(tmp_path, "PRJ-001")
         data = {
             "task_id": "PRJ-001",
             "created": "2026-04-21",
@@ -481,7 +481,7 @@ class TestDraftStorage:
         assert loaded == data
 
     def test_malformed_file_returns_default(self, tmp_path: Path) -> None:
-        p = _draft_path(tmp_path, "demo", "PRJ-001")
+        p = _draft_path(tmp_path, "PRJ-001")
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("{{not json", encoding="utf-8")
         data = _load_draft_file(p)
@@ -500,7 +500,8 @@ from hivemind.commands.feedback import feedback as _feedback_group  # noqa: E402
 
 def _setup_config(tmp_path: Path) -> Path:
     data_path = _make_data_dir(tmp_path)
-    (data_path / "tasks" / "demo" / "_reports").mkdir(parents=True, exist_ok=True)
+    # v5: drafts live under <linked>/hivemind/tasks/_reports/
+    (tmp_path / "hivemind" / "tasks" / "_reports").mkdir(parents=True, exist_ok=True)
     cfg = {
         "version": "3.0.0",
         "data_path": str(data_path),
@@ -512,10 +513,15 @@ def _setup_config(tmp_path: Path) -> Path:
     return data_path
 
 
+def _v5_reports_dir(tmp_path: Path) -> Path:
+    """Return the v5 drafts dir for the 'demo' project fixture."""
+    return tmp_path / "hivemind" / "tasks" / "_reports"
+
+
 class TestDraftAddCLI:
     def test_accept_and_persist(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.chdir(tmp_path)
-        data_path = _setup_config(tmp_path)
+        _setup_config(tmp_path)
 
         content = (
             "When FastAPI returns 405 on OPTIONS requests, always add CORSMiddleware "
@@ -541,7 +547,7 @@ class TestDraftAddCLI:
             ],
         )
         assert result.exit_code == 0, result.output
-        draft_file = data_path / "tasks" / "demo" / "_reports" / "DM-001-lessons-draft.json"
+        draft_file = _v5_reports_dir(tmp_path) / "DM-001-lessons-draft.json"
         assert draft_file.exists()
         data = json.loads(draft_file.read_text(encoding="utf-8"))
         assert len(data["drafts"]) == 1
@@ -620,7 +626,7 @@ class TestPromoteDraftsCLI:
 
         # Draft marked promoted
         draft_file = (
-            data_path / "tasks" / "demo" / "_reports" / "DM-001-lessons-draft.json"
+            _v5_reports_dir(tmp_path) / "DM-001-lessons-draft.json"
         )
         data = json.loads(draft_file.read_text(encoding="utf-8"))
         assert data["drafts"][0]["status"] == "promoted"
@@ -769,7 +775,7 @@ class TestAppendToHarnessDoc:
 class TestDraftAddWithTarget:
     def test_target_persisted(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.chdir(tmp_path)
-        data_path = _setup_config(tmp_path)
+        _setup_config(tmp_path)
         content_file = tmp_path / "c.txt"
         content_file.write_text(
             "NEVER import from src/legacy/ in FastAPI routers — scheduled for removal.",
@@ -794,7 +800,7 @@ class TestDraftAddWithTarget:
         )
         assert result.exit_code == 0, result.output
         draft_file = (
-            data_path / "tasks" / "demo" / "_reports" / "DM-001-lessons-draft.json"
+            _v5_reports_dir(tmp_path) / "DM-001-lessons-draft.json"
         )
         data = json.loads(draft_file.read_text(encoding="utf-8"))
         assert data["drafts"][0]["target"] == "rules"
@@ -803,9 +809,9 @@ class TestDraftAddWithTarget:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        data_path = _setup_config(tmp_path)
+        _setup_config(tmp_path)
         # Manually write a v1 draft (no target field)
-        draft_dir = data_path / "tasks" / "demo" / "_reports"
+        draft_dir = _v5_reports_dir(tmp_path)
         draft_dir.mkdir(parents=True, exist_ok=True)
         legacy = {
             "task_id": "DM-001",
@@ -1157,7 +1163,7 @@ class TestDraftAddBindingCLI:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        data_path = _setup_config(tmp_path)
+        _setup_config(tmp_path)
         features = tmp_path / "hivemind" / "docs" / "features"
         features.mkdir(parents=True)
         feature_file = features / "00_multi-assign.md"
@@ -1186,7 +1192,7 @@ class TestDraftAddBindingCLI:
 
         # Draft is marked promoted in storage.
         draft_file = (
-            data_path / "tasks" / "demo" / "_reports" / "DM-001-lessons-draft.json"
+            _v5_reports_dir(tmp_path) / "DM-001-lessons-draft.json"
         )
         data = json.loads(draft_file.read_text(encoding="utf-8"))
         assert data["drafts"][0]["status"] == "promoted"

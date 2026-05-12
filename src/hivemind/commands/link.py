@@ -14,6 +14,12 @@ from hivemind.core.config import (
 )
 from hivemind.core.git import auto_commit
 from hivemind.core.instructions import write_codex_hooks_file, write_instruction_files
+from hivemind.core.paths import (
+    harness_spec_dir,
+    link_file_target,
+    resolve_link_file,
+    task_dir,
+)
 
 
 def _detect_name(name: str | None, project_dir: Path) -> str:
@@ -76,7 +82,9 @@ def link_project(
 
     Returns the resolved project name.
     """
-    link_file = project_dir / ".hivemind-link.json"
+    # v5 writes to <project_dir>/hivemind/link.json; legacy reads still find
+    # the old <project_dir>/.hivemind-link.json via resolve_link_file().
+    existing_link = resolve_link_file(project_dir)
 
     # Detect name early so an existing link can still be refreshed.
     resolved_name = _detect_name(name, project_dir)
@@ -87,9 +95,9 @@ def link_project(
     # Old v3-shaped fields (data_path, targets) are ignored — v4 derives
     # data_path from the global config location and reads targets from
     # runtime.enabled_targets, not the link file.
-    if link_file.exists():
+    if existing_link is not None:
         try:
-            existing = json.loads(link_file.read_text(encoding="utf-8"))
+            existing = json.loads(existing_link.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             existing = {}
         if isinstance(existing, dict):
@@ -122,22 +130,34 @@ def link_project(
     else:
         prefix = _generate_prefix(resolved_name)
 
-    # 1. Create .hivemind-link.json in project root (v4 shape — {project, prefix})
+    # 1. Write link.json to the v5 location (<project_dir>/hivemind/link.json).
+    # If a legacy <project_dir>/.hivemind-link.json was just consumed, remove
+    # it so the project doesn't end up with two link files.
     link_data = {
         "project": resolved_name,
         "prefix": prefix,
     }
-    link_file.write_text(
+    new_link_file = link_file_target(project_dir)
+    new_link_file.write_text(
         json.dumps(link_data, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    click.echo(f"Created {link_file}")
+    legacy_link_file = project_dir / ".hivemind-link.json"
+    if legacy_link_file.exists() and legacy_link_file != new_link_file:
+        try:
+            legacy_link_file.unlink()
+        except OSError:
+            pass
+    click.echo(f"Created {new_link_file}")
 
-    # 2-5. Create directories in data repo
+    # 2-5. Create per-project dirs.
+    # v5: specs/tasks live in the project repo under <linked>/hivemind/.
+    # level3 stays cross-project under the data repo.
+    project_tasks = task_dir(project_dir)
     dirs_to_create = [
-        data_path / "projects" / resolved_name,
-        data_path / "tasks" / resolved_name,
-        data_path / "tasks" / resolved_name / "_reports",
+        harness_spec_dir(project_dir),
+        project_tasks,
+        project_tasks / "_reports",
         data_path / "level3" / resolved_name,
     ]
     for d in dirs_to_create:
