@@ -20,12 +20,12 @@ from hivemind.core.harness_quality import (
     HarnessScore,
     append_score,
     build_score_from_payload,
-    harness_spec_dir,
     hash_harness,
     is_fresh,
     latest_score,
     load_scores,
 )
+from hivemind.core.paths import harness_spec_dir, linked_path_for
 
 
 def _parse_age(spec: str) -> timedelta:
@@ -104,8 +104,12 @@ def record(project: str, from_stdin: bool, model: str | None) -> None:
     except json.JSONDecodeError as e:
         raise click.ClickException(f"invalid JSON on stdin: {e}")
 
-    cfg, data_path = _find_config()
-    spec_dir = harness_spec_dir(data_path, project)
+    cfg, _data_path = _find_config()
+    try:
+        linked = linked_path_for(cfg, project)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc))
+    spec_dir = harness_spec_dir(linked)
     if not spec_dir.exists():
         raise click.ClickException(
             f"no harness spec dir for project: {spec_dir} — run the planning skill first"
@@ -128,7 +132,7 @@ def record(project: str, from_stdin: bool, model: str | None) -> None:
     except ValueError as e:
         raise click.ClickException(str(e))
 
-    path = append_score(data_path, project, score)
+    path = append_score(linked, score)
     click.echo(f"Recorded: {path}")
     click.echo(_format_score(score))
 
@@ -147,14 +151,18 @@ def show(project: str, if_fresh: str | None, fmt: str) -> None:
     # Parse --if-fresh up front so a bad format fails fast regardless of state.
     max_age = _parse_age(if_fresh) if if_fresh is not None else None
 
-    _cfg, data_path = _find_config()
-    latest = latest_score(data_path, project)
+    cfg, _data_path = _find_config()
+    try:
+        linked = linked_path_for(cfg, project)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc))
+    latest = latest_score(linked)
     if latest is None:
         click.echo("No harness score recorded yet.")
         sys.exit(2 if if_fresh else 0)
 
     if max_age is not None:
-        current_hash = hash_harness(harness_spec_dir(data_path, project))
+        current_hash = hash_harness(harness_spec_dir(linked))
         if not is_fresh(latest, current_hash, max_age):
             # Stale — tell the caller (skill) to re-score.
             click.echo(
@@ -178,8 +186,12 @@ def show(project: str, if_fresh: str | None, fmt: str) -> None:
 )
 def history(project: str, fmt: str, limit: int) -> None:
     """Show harness score trend (most recent entries first)."""
-    _cfg, data_path = _find_config()
-    scores = load_scores(data_path, project)
+    cfg, _data_path = _find_config()
+    try:
+        linked = linked_path_for(cfg, project)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc))
+    scores = load_scores(linked)
     if not scores:
         click.echo("No harness scores recorded yet.")
         return

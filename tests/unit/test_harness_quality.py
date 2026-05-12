@@ -110,33 +110,29 @@ class TestBuildScoreFromPayload:
 
 class TestAppendLoad:
     def test_append_and_reload(self, tmp_path: Path) -> None:
-        data_path = tmp_path
-        spec = tmp_path / "projects" / "demo"
-        _write_harness(spec)
+        linked = tmp_path
         payload = {"axes": {"architecture": {"score": 8, "rationale": "ok"}}}
         s = build_score_from_payload(payload, hash_str="sha256:a", model="m")
-        append_score(data_path, "demo", s)
-        loaded = load_scores(data_path, "demo")
+        append_score(linked, s)
+        loaded = load_scores(linked)
         assert len(loaded) == 1
         assert loaded[0].overall == 8
 
     def test_multiple_entries_preserve_order(self, tmp_path: Path) -> None:
-        data_path = tmp_path
-        spec = tmp_path / "projects" / "demo"
-        _write_harness(spec)
+        linked = tmp_path
         for i in range(3):
             s = build_score_from_payload(
                 {"axes": {"architecture": {"score": i, "rationale": "r"}}},
                 hash_str=f"sha256:{i}",
                 model="m",
             )
-            append_score(data_path, "demo", s)
-        loaded = load_scores(data_path, "demo")
+            append_score(linked, s)
+        loaded = load_scores(linked)
         assert [s.overall for s in loaded] == [0, 1, 2]
 
     def test_malformed_line_skipped(self, tmp_path: Path) -> None:
-        data_path = tmp_path
-        path = scores_path(data_path, "demo")
+        linked = tmp_path
+        path = scores_path(linked)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             '{"timestamp":"t","hash":"h","rubric_version":1,"model":"m","axes":{"a":{"score":5}},"overall":5,"overall_max":10}\n'
@@ -144,11 +140,11 @@ class TestAppendLoad:
             '{"timestamp":"t2","hash":"h2","rubric_version":1,"model":"m","axes":{"a":{"score":7}},"overall":7,"overall_max":10}\n',
             encoding="utf-8",
         )
-        loaded = load_scores(data_path, "demo")
+        loaded = load_scores(linked)
         assert [s.overall for s in loaded] == [5, 7]
 
     def test_latest_on_empty(self, tmp_path: Path) -> None:
-        assert latest_score(tmp_path, "nope") is None
+        assert latest_score(tmp_path) is None
 
 
 class TestIsFresh:
@@ -200,11 +196,16 @@ from hivemind.commands.harness_score import harness_score_cmd  # noqa: E402
 
 
 def _setup_workspace(tmp_path: Path, project: str = "demo") -> tuple[Path, Path]:
+    """Set up a v5 workspace: spec under <linked>/hivemind/docs, data dir separate.
+
+    Returns ``(data_path, spec)``. ``spec`` is the v5 spec-doc dir; pass
+    ``tmp_path`` (= linked_path) directly to v5 score helpers.
+    """
     data_path = tmp_path / "data"
     data_path.mkdir()
-    for d in ("projects", "tasks", "level1", "level2", "level3"):
+    for d in ("level2", "level3"):
         (data_path / d).mkdir()
-    spec = data_path / "projects" / project
+    spec = tmp_path / "hivemind" / "docs"
     _write_harness(spec)
     cfg = {
         "version": "3.0.0",
@@ -247,7 +248,7 @@ class TestCLIRecord:
         assert result.exit_code == 0, result.output
         assert "Recorded" in result.output
         # Verify persistence
-        loaded = load_scores(data_path, "demo")
+        loaded = load_scores(tmp_path)
         assert len(loaded) == 1
         assert loaded[0].overall == 35
         # Model came from profile reviewer
@@ -320,7 +321,7 @@ class TestCLIShow:
             hash_str=hash_harness(spec),
             model="m",
         )
-        append_score(data_path, "demo", s)
+        append_score(tmp_path, s)
 
         runner = CliRunner()
         result = runner.invoke(
@@ -339,7 +340,7 @@ class TestCLIShow:
             hash_str="sha256:stale",
             model="m",
         )
-        append_score(data_path, "demo", s)
+        append_score(tmp_path, s)
         runner = CliRunner()
         result = runner.invoke(
             harness_score_cmd, ["show", "-p", "demo", "--if-fresh", "7d"]
@@ -376,7 +377,7 @@ class TestCLIHistory:
                 hash_str=f"sha256:{score_val}",
                 model="m",
             )
-            append_score(data_path, "demo", s)
+            append_score(tmp_path, s)
 
         runner = CliRunner()
         result = runner.invoke(harness_score_cmd, ["history", "-p", "demo"])
@@ -393,7 +394,7 @@ class TestCLIHistory:
             hash_str="h",
             model="m",
         )
-        append_score(data_path, "demo", s)
+        append_score(tmp_path, s)
         runner = CliRunner()
         result = runner.invoke(
             harness_score_cmd, ["history", "-p", "demo", "--format", "json"]
@@ -437,7 +438,7 @@ class TestStatsHarness:
                 hash_str=f"h{sc}",
                 model="m",
             )
-            append_score(data_path, "demo", s)
+            append_score(tmp_path, s)
         runner = CliRunner()
         result = runner.invoke(stats, ["-p", "demo", "--harness"])
         assert result.exit_code == 0
@@ -459,7 +460,7 @@ class TestStatsHarness:
             overall=8,
             overall_max=10,
         )
-        append_score(data_path, "demo", old)
+        append_score(tmp_path, old)
         runner = CliRunner()
         result = runner.invoke(stats, ["-p", "demo", "--harness"])
         assert result.exit_code == 0

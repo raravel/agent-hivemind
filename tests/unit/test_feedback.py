@@ -673,20 +673,26 @@ class TestNormalizeTarget:
         assert _normalize_target(raw) == expected
 
     def test_all_valid_targets_declared(self) -> None:
-        assert set(VALID_TARGETS) == {"L2", "rules", "tech-stack", "architecture"}
+        assert set(VALID_TARGETS) == {
+            "L2",
+            "rules",
+            "tech-stack",
+            "architecture",
+            "features",
+        }
 
 
 class TestAppendToHarnessDoc:
     def _setup(self, tmp_path: Path, project: str = "demo") -> Path:
-        data_path = tmp_path
-        spec = data_path / "projects" / project
+        """Return ``linked_path`` (v5: specs at linked_path/hivemind/docs/)."""
+        spec = tmp_path / "hivemind" / "docs"
         spec.mkdir(parents=True, exist_ok=True)
-        return data_path
+        return tmp_path
 
     def test_creates_file_and_section_when_missing(self, tmp_path: Path) -> None:
-        data_path = self._setup(tmp_path)
+        linked = self._setup(tmp_path)
         path, appended = _append_to_harness_doc(
-            data_path, "demo", "rules", "NEVER write to /tmp", "DM-001", "2026-04-21"
+            linked, "rules", "NEVER write to /tmp", "DM-001", "2026-04-21"
         )
         assert appended is True
         text = path.read_text(encoding="utf-8")
@@ -694,13 +700,13 @@ class TestAppendToHarnessDoc:
         assert "- [LEARNED 2026-04-21 from DM-001] NEVER write to /tmp" in text
 
     def test_appends_under_existing_section(self, tmp_path: Path) -> None:
-        data_path = self._setup(tmp_path)
-        rules_path = data_path / "projects" / "demo" / "rules.md"
+        linked = self._setup(tmp_path)
+        rules_path = linked / "hivemind" / "docs" / "rules.md"
         rules_path.write_text(
             "# Rules\n\n## Learned rules\n\n- previous entry\n", encoding="utf-8"
         )
         _, appended = _append_to_harness_doc(
-            data_path, "demo", "rules", "NEVER import legacy", "DM-002", "2026-04-22"
+            linked, "rules", "NEVER import legacy", "DM-002", "2026-04-22"
         )
         assert appended
         text = rules_path.read_text(encoding="utf-8")
@@ -708,14 +714,14 @@ class TestAppendToHarnessDoc:
         assert "NEVER import legacy" in text
 
     def test_inserts_before_next_heading(self, tmp_path: Path) -> None:
-        data_path = self._setup(tmp_path)
-        rules_path = data_path / "projects" / "demo" / "rules.md"
+        linked = self._setup(tmp_path)
+        rules_path = linked / "hivemind" / "docs" / "rules.md"
         rules_path.write_text(
             "# Rules\n\n## Learned rules\n\n- old\n\n## Other\n\nfollowup\n",
             encoding="utf-8",
         )
         _, appended = _append_to_harness_doc(
-            data_path, "demo", "rules", "NEVER commit secrets", "T1", "2026-01-01"
+            linked, "rules", "NEVER commit secrets", "T1", "2026-01-01"
         )
         assert appended
         text = rules_path.read_text(encoding="utf-8")
@@ -725,22 +731,21 @@ class TestAppendToHarnessDoc:
         assert idx_bullet < idx_other
 
     def test_dedupes_exact_content(self, tmp_path: Path) -> None:
-        data_path = self._setup(tmp_path)
+        linked = self._setup(tmp_path)
         body = "NEVER import from legacy/"
         _, first = _append_to_harness_doc(
-            data_path, "demo", "rules", body, "DM-001", "2026-04-21"
+            linked, "rules", body, "DM-001", "2026-04-21"
         )
         _, second = _append_to_harness_doc(
-            data_path, "demo", "rules", body, "DM-002", "2026-04-22"
+            linked, "rules", body, "DM-002", "2026-04-22"
         )
         assert first is True
         assert second is False  # duplicate rejected
 
     def test_tech_stack_uses_patterns_section(self, tmp_path: Path) -> None:
-        data_path = self._setup(tmp_path)
+        linked = self._setup(tmp_path)
         path, _ = _append_to_harness_doc(
-            data_path,
-            "demo",
+            linked,
             "tech-stack",
             "Pin python-frontmatter==1.1.0",
             "DM-003",
@@ -749,16 +754,16 @@ class TestAppendToHarnessDoc:
         assert "## Learned patterns" in path.read_text(encoding="utf-8")
 
     def test_architecture_uses_constraints_section(self, tmp_path: Path) -> None:
-        data_path = self._setup(tmp_path)
+        linked = self._setup(tmp_path)
         path, _ = _append_to_harness_doc(
-            data_path,
-            "demo",
+            linked,
             "architecture",
             "core must not import from commands",
             "DM-004",
             "2026-04-21",
         )
         assert "## Learned constraints" in path.read_text(encoding="utf-8")
+
 
 
 class TestDraftAddWithTarget:
@@ -862,8 +867,8 @@ class TestPromoteTargetRouting:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        data_path = _setup_config(tmp_path)
-        (data_path / "projects" / "demo").mkdir(parents=True, exist_ok=True)
+        _setup_config(tmp_path)
+        (tmp_path / "hivemind" / "docs").mkdir(parents=True, exist_ok=True)
 
         self._add(
             tmp_path,
@@ -879,7 +884,7 @@ class TestPromoteTargetRouting:
         )
         assert result.exit_code == 0, result.output
         assert "harness=1" in result.output
-        rules_md = data_path / "projects" / "demo" / "rules.md"
+        rules_md = tmp_path / "hivemind" / "docs" / "rules.md"
         assert rules_md.exists()
         text = rules_md.read_text(encoding="utf-8")
         assert "## Learned rules" in text
@@ -889,8 +894,8 @@ class TestPromoteTargetRouting:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        data_path = _setup_config(tmp_path)
-        (data_path / "projects" / "demo").mkdir(parents=True, exist_ok=True)
+        _setup_config(tmp_path)
+        (tmp_path / "hivemind" / "docs").mkdir(parents=True, exist_ok=True)
 
         self._add(
             tmp_path,
@@ -905,7 +910,7 @@ class TestPromoteTargetRouting:
             _feedback_group, ["promote-drafts", "-p", "demo", "--auto"]
         )
         assert result.exit_code == 0
-        arch_md = data_path / "projects" / "demo" / "architecture.md"
+        arch_md = tmp_path / "hivemind" / "docs" / "architecture.md"
         assert arch_md.exists()
         assert "## Learned constraints" in arch_md.read_text(encoding="utf-8")
 
@@ -913,8 +918,8 @@ class TestPromoteTargetRouting:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        data_path = _setup_config(tmp_path)
-        (data_path / "projects" / "demo").mkdir(parents=True, exist_ok=True)
+        _setup_config(tmp_path)
+        (tmp_path / "hivemind" / "docs").mkdir(parents=True, exist_ok=True)
 
         body = (
             "NEVER set DEBUG=True in production config.py — it leaks secret "
@@ -928,6 +933,318 @@ class TestPromoteTargetRouting:
             _feedback_group, ["promote-drafts", "-p", "demo", "--auto"]
         )
         assert result.exit_code == 0
-        rules_md = data_path / "projects" / "demo" / "rules.md"
+        rules_md = tmp_path / "hivemind" / "docs" / "rules.md"
         occurrences = rules_md.read_text(encoding="utf-8").count(body)
         assert occurrences == 1  # deduped
+
+
+# ---------------------------------------------------------------------------
+# Binding sync (Phase 2): features target, section override, auto-promote
+# ---------------------------------------------------------------------------
+
+
+from hivemind.commands.feedback import (  # noqa: E402
+    _BINDING_COMBOS,
+    _is_binding,
+    _normalize_section_heading,
+    _resolve_feature_path,
+)
+
+
+class TestSectionAndBindingHelpers:
+    def test_normalize_section_heading_adds_prefix(self) -> None:
+        assert _normalize_section_heading("Active Dependencies") == "## Active Dependencies"
+
+    def test_normalize_section_heading_keeps_existing_prefix(self) -> None:
+        assert _normalize_section_heading("## Active Dependencies") == "## Active Dependencies"
+
+    def test_normalize_section_heading_handles_none_and_empty(self) -> None:
+        assert _normalize_section_heading(None) is None
+        assert _normalize_section_heading("   ") is None
+
+    def test_is_binding_features_always_true(self) -> None:
+        assert _is_binding("features", None) is True
+        assert _is_binding("features", "## Implementation") is True
+
+    def test_is_binding_tech_stack_requires_active_deps_section(self) -> None:
+        assert _is_binding("tech-stack", "## Active Dependencies") is True
+        assert _is_binding("tech-stack", "Active Dependencies") is True
+        assert _is_binding("tech-stack", None) is False
+        assert _is_binding("tech-stack", "## Learned patterns") is False
+
+    def test_is_binding_other_targets_false(self) -> None:
+        assert _is_binding("rules", "## Anything") is False
+        assert _is_binding("architecture", "## Active Dependencies") is False
+        assert _is_binding("L2", None) is False
+
+    def test_binding_combos_constant(self) -> None:
+        assert ("features", "## Implementation") in _BINDING_COMBOS
+        assert ("tech-stack", "## Active Dependencies") in _BINDING_COMBOS
+
+
+class TestResolveFeaturePath:
+    def _setup(self, tmp_path: Path) -> Path:
+        """Return ``linked_path`` with hivemind/docs/features ready (v5)."""
+        features = tmp_path / "hivemind" / "docs" / "features"
+        features.mkdir(parents=True, exist_ok=True)
+        return tmp_path
+
+    def test_match_planner_convention(self, tmp_path: Path) -> None:
+        linked = self._setup(tmp_path)
+        target = linked / "hivemind" / "docs" / "features" / "00_multi-assign.md"
+        target.write_text("# Feature\n", encoding="utf-8")
+        assert _resolve_feature_path(linked, "multi-assign") == target
+
+    def test_match_plain_slug(self, tmp_path: Path) -> None:
+        linked = self._setup(tmp_path)
+        target = linked / "hivemind" / "docs" / "features" / "deadlines.md"
+        target.write_text("# Feature\n", encoding="utf-8")
+        assert _resolve_feature_path(linked, "deadlines") == target
+
+    def test_none_when_missing(self, tmp_path: Path) -> None:
+        linked = self._setup(tmp_path)
+        assert _resolve_feature_path(linked, "ghost") is None
+
+    def test_none_when_ambiguous(self, tmp_path: Path) -> None:
+        linked = self._setup(tmp_path)
+        d = linked / "hivemind" / "docs" / "features"
+        (d / "00_assign.md").write_text("", encoding="utf-8")
+        (d / "01_assign-list.md").write_text("", encoding="utf-8")
+        # slug "assign" matches both stems
+        assert _resolve_feature_path(linked, "assign") is None
+
+
+class TestAppendToHarnessDocWithBindingKwargs:
+    def _setup(self, tmp_path: Path) -> Path:
+        (tmp_path / "hivemind" / "docs").mkdir(parents=True, exist_ok=True)
+        return tmp_path
+
+    def test_section_override_changes_heading(self, tmp_path: Path) -> None:
+        linked = self._setup(tmp_path)
+        path, appended = _append_to_harness_doc(
+            linked,
+            "tech-stack",
+            "express ^5.1.0 — HTTP server",
+            "DM-100",
+            "2026-05-11",
+            section="Active Dependencies",
+            kind="BOUND",
+        )
+        assert appended
+        text = path.read_text(encoding="utf-8")
+        assert "## Active Dependencies" in text
+        assert "## Learned patterns" not in text
+        assert "[BOUND 2026-05-11 from DM-100]" in text
+
+    def test_features_target_writes_to_resolved_feature(self, tmp_path: Path) -> None:
+        linked = self._setup(tmp_path)
+        features = linked / "hivemind" / "docs" / "features"
+        features.mkdir(parents=True)
+        feature_file = features / "00_multi-assign.md"
+        feature_file.write_text("# Feature\n", encoding="utf-8")
+
+        path, appended = _append_to_harness_doc(
+            linked,
+            "features",
+            "`views/target/js/assign.js` — primary UI",
+            "DM-200",
+            "2026-05-11",
+            feature_slug="multi-assign",
+            kind="BOUND",
+        )
+        assert appended
+        assert path == feature_file
+        text = feature_file.read_text(encoding="utf-8")
+        assert "## Implementation" in text
+        assert "[BOUND 2026-05-11 from DM-200]" in text
+        assert "`views/target/js/assign.js`" in text
+
+    def test_features_target_requires_slug(self, tmp_path: Path) -> None:
+        linked = self._setup(tmp_path)
+        with pytest.raises(ValueError, match="feature_slug is required"):
+            _append_to_harness_doc(
+                linked, "features", "x", "DM-1", "2026-05-11"
+            )
+
+    def test_features_target_rejects_unresolved_slug(self, tmp_path: Path) -> None:
+        linked = self._setup(tmp_path)
+        (linked / "hivemind" / "docs" / "features").mkdir(parents=True)
+        with pytest.raises(ValueError, match="did not match exactly one"):
+            _append_to_harness_doc(
+                linked,
+                "features",
+                "x",
+                "DM-1",
+                "2026-05-11",
+                feature_slug="ghost",
+            )
+
+
+class TestDraftAddBindingCLI:
+    def _write(self, tmp_path: Path, body: str) -> Path:
+        f = tmp_path / "c.txt"
+        f.write_text(body, encoding="utf-8")
+        return f
+
+    def test_features_requires_feature_flag(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _setup_config(tmp_path)
+        content = self._write(tmp_path, "`src/foo.py` — primary impl")
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group,
+            [
+                "draft-add",
+                "-p", "demo",
+                "--task", "DM-001",
+                "--title", "Impl: foo.py",
+                "-c", str(content),
+                "--target", "features",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "--feature is required" in result.output
+
+    def test_feature_flag_outside_features_target_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _setup_config(tmp_path)
+        content = self._write(tmp_path, "some content")
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group,
+            [
+                "draft-add",
+                "-p", "demo",
+                "--task", "DM-001",
+                "--title", "x",
+                "-c", str(content),
+                "--target", "rules",
+                "--feature", "foo",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "--feature is only valid" in result.output
+
+    def test_auto_promote_gate_rejects_non_binding(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _setup_config(tmp_path)
+        content = self._write(
+            tmp_path, "NEVER import from legacy in routers — scheduled for removal."
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group,
+            [
+                "draft-add",
+                "-p", "demo",
+                "--task", "DM-001",
+                "--title", "NEVER legacy",
+                "-c", str(content),
+                "--target", "rules",
+                "--auto-promote",
+            ],
+        )
+        assert result.exit_code == 2
+        assert "binding combinations" in result.output
+
+    def test_features_auto_promote_writes_to_feature_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        data_path = _setup_config(tmp_path)
+        features = tmp_path / "hivemind" / "docs" / "features"
+        features.mkdir(parents=True)
+        feature_file = features / "00_multi-assign.md"
+        feature_file.write_text("# Multi assign\n", encoding="utf-8")
+
+        content = self._write(tmp_path, "`views/target/js/assign.js` — primary UI")
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group,
+            [
+                "draft-add",
+                "-p", "demo",
+                "--task", "DM-001",
+                "--title", "Impl: assign.js",
+                "-c", str(content),
+                "--target", "features",
+                "--feature", "multi-assign",
+                "--auto-promote",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        text = feature_file.read_text(encoding="utf-8")
+        assert "## Implementation" in text
+        assert "[BOUND" in text
+        assert "`views/target/js/assign.js`" in text
+
+        # Draft is marked promoted in storage.
+        draft_file = (
+            data_path / "tasks" / "demo" / "_reports" / "DM-001-lessons-draft.json"
+        )
+        data = json.loads(draft_file.read_text(encoding="utf-8"))
+        assert data["drafts"][0]["status"] == "promoted"
+        assert data["drafts"][0]["kind"] == "BOUND"
+
+    def test_tech_stack_active_deps_auto_promote_writes_correct_section(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _setup_config(tmp_path)
+        (tmp_path / "hivemind" / "docs").mkdir(parents=True, exist_ok=True)
+
+        content = self._write(tmp_path, "express ^5.1.0 — HTTP server")
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group,
+            [
+                "draft-add",
+                "-p", "demo",
+                "--task", "DM-002",
+                "--title", "Add dep: express",
+                "-c", str(content),
+                "--target", "tech-stack",
+                "--section", "Active Dependencies",
+                "--auto-promote",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        tech = (tmp_path / "hivemind" / "docs" / "tech-stack.md").read_text(encoding="utf-8")
+        assert "## Active Dependencies" in tech
+        # The default Learned patterns section is NOT created for this binding write.
+        assert "## Learned patterns" not in tech
+        assert "express ^5.1.0" in tech
+
+    def test_binding_skips_quality_gate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Binding content like a bare file path lacks action verbs but must be accepted."""
+        monkeypatch.chdir(tmp_path)
+        _setup_config(tmp_path)
+        features = tmp_path / "hivemind" / "docs" / "features"
+        features.mkdir(parents=True)
+        (features / "00_things.md").write_text("# Things\n", encoding="utf-8")
+
+        # No action verb, no rationale — would fail the lesson quality gate.
+        content = self._write(tmp_path, "`src/foo.py`")
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group,
+            [
+                "draft-add",
+                "-p", "demo",
+                "--task", "DM-003",
+                "--title", "Impl: src/foo.py",
+                "-c", str(content),
+                "--target", "features",
+                "--feature", "things",
+                "--auto-promote",
+            ],
+        )
+        assert result.exit_code == 0, result.output

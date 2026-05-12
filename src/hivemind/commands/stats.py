@@ -12,6 +12,7 @@ import frontmatter
 
 from hivemind.commands.audit import _find_config
 from hivemind.core.harness_quality import RUBRIC_VERSION, load_scores
+from hivemind.core.paths import linked_path_for
 
 
 def _parse_report(path: Path) -> dict[str, object] | None:
@@ -253,8 +254,12 @@ def run_stats(project: str, since: str | None = None) -> str:
 
 def _render_harness_trend(project: str, limit: int) -> str:
     """Render the harness score trend as a text block."""
-    _cfg, data_path = _find_config()
-    scores = load_scores(data_path, project)
+    cfg, _data_path = _find_config()
+    try:
+        linked = linked_path_for(cfg, project)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc))
+    scores = load_scores(linked)
     if not scores:
         return "No harness scores recorded yet (run the hv-score-harness skill)."
 

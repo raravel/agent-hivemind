@@ -529,7 +529,6 @@ def migrate_v2_to_v3(
                 changed = write_instruction_files(
                     proj_dir,
                     project=str(project),
-                    data_path=posix_data_path,
                     targets=targets,
                 )
                 if changed:

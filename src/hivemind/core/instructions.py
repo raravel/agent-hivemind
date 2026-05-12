@@ -37,23 +37,22 @@ def replace_managed_block(existing: str, block: str) -> str:
     return managed
 
 
-def build_agents_block(*, project: str, data_path: str, targets: list[str]) -> str:
+def build_agents_block(*, project: str, targets: list[str]) -> str:
     """Build the managed AGENTS.md content block.
 
-    The block now carries only the project name. ``data_path`` is still
-    accepted to anchor the spec @-import paths but is no longer printed
-    as a metadata line — it lives in the global config under v4. The
-    ``targets`` argument is accepted for API stability but unused; the
-    runtime reads ``runtime.enabled_targets`` from the global config.
+    Specs live in ``<repo>/hivemind/docs/`` (v5 layout) — a relative path,
+    so the block is portable across machines without baking the original
+    user's data-dir choice into git. The ``targets`` argument is accepted
+    for API stability but unused; the runtime reads
+    ``runtime.enabled_targets`` from the global config.
     """
-    del targets  # rendered targets line removed in v4
-    project_spec_root = f"{data_path}/projects/{project}"
+    del targets
     return (
         "# Hivemind Project\n"
         f"- project: {project}\n\n"
         "When planning or executing tracked work, consult the linked hivemind "
         "project docs under:\n"
-        f"- {project_spec_root}/\n\n"
+        "- hivemind/docs/\n\n"
         "Prioritize these files when they exist:\n"
         "- architecture.md\n"
         "- rules.md\n"
@@ -63,19 +62,20 @@ def build_agents_block(*, project: str, data_path: str, targets: list[str]) -> s
     )
 
 
-def build_claude_block(*, project: str, data_path: str, targets: list[str]) -> str:
+def build_claude_block(*, project: str, targets: list[str]) -> str:
     """Build the managed CLAUDE.md import block.
 
-    See :func:`build_agents_block` — the same v4 cleanup applies here.
+    Uses relative ``@hivemind/docs/...`` paths (v5 layout). Portable: any
+    clone of the repo on any machine sees the same imports — no per-user
+    data-dir assumption.
     """
     del targets
-    project_spec_root = f"{data_path}/projects/{project}"
     return (
         "# Hivemind Project\n"
         f"- project: {project}\n\n"
         "@AGENTS.md\n"
-        f"@{project_spec_root}/architecture.md\n"
-        f"@{project_spec_root}/rules.md\n"
+        "@hivemind/docs/architecture.md\n"
+        "@hivemind/docs/rules.md\n"
     )
 
 
@@ -83,7 +83,6 @@ def write_instruction_files(
     project_dir: Path,
     *,
     project: str,
-    data_path: str,
     targets: list[str],
 ) -> list[str]:
     """Write managed AGENTS.md / CLAUDE.md files for the linked project."""
@@ -95,7 +94,7 @@ def write_instruction_files(
     )
     new_agents = replace_managed_block(
         agents_content,
-        build_agents_block(project=project, data_path=data_path, targets=targets),
+        build_agents_block(project=project, targets=targets),
     )
     if new_agents != agents_content:
         agents_md.write_text(new_agents, encoding="utf-8")
@@ -108,7 +107,7 @@ def write_instruction_files(
         )
         new_claude = replace_managed_block(
             claude_content,
-            build_claude_block(project=project, data_path=data_path, targets=targets),
+            build_claude_block(project=project, targets=targets),
         )
         if new_claude != claude_content:
             claude_md.write_text(new_claude, encoding="utf-8")

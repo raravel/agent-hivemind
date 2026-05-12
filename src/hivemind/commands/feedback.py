@@ -114,6 +114,19 @@ def _resolve_data_path(project: str) -> Path:
         return Path("~/agent-hivemind-data").expanduser()
 
 
+def _resolve_linked_path(project: str) -> Path | None:
+    """Resolve project's ``linked_path`` (v5 spec/task root). None if not registered."""
+    try:
+        cfg = HivemindConfig.find_for_command()
+    except FileNotFoundError:
+        return None
+    from hivemind.core.paths import linked_path_for
+    try:
+        return linked_path_for(cfg, project)
+    except FileNotFoundError:
+        return None
+
+
 def _update_existing_doc(
     data_path: Path, doc_rel_path: str, source_info: str
 ) -> Path:
@@ -180,18 +193,42 @@ def _create_new_doc(
 # Target routing — where should a draft lesson land?
 # ---------------------------------------------------------------------------
 
-# Valid routing targets. L2 is the generic cross-project tier; the other three
-# write into the project's harness docs (project-scoped, git-tracked).
-VALID_TARGETS: tuple[str, ...] = ("L2", "rules", "tech-stack", "architecture")
+# Valid routing targets. L2 is the generic cross-project tier; the other
+# four write into the project's harness docs (project-scoped, git-tracked).
+# `features` is a per-feature target — caller must also provide a feature slug.
+VALID_TARGETS: tuple[str, ...] = ("L2", "rules", "tech-stack", "architecture", "features")
 
 # The section header each harness-doc target appends under. Chosen so a reader
 # can distinguish hand-curated content from auto-added entries.
+# Default section for `tech-stack` is "Learned patterns" (lessons); the
+# binding-sync caller overrides this with `--section "Active Dependencies"`.
 _HARNESS_TARGET_FILES: dict[str, tuple[str, str]] = {
-    # target -> (filename, section heading)
+    # target -> (filename, default section heading)
     "rules": ("rules.md", "## Learned rules"),
     "tech-stack": ("tech-stack.md", "## Learned patterns"),
     "architecture": ("architecture.md", "## Learned constraints"),
+    # `features` is special — filename depends on the feature slug.
+    # The append helper resolves the actual path via _resolve_feature_path.
+    "features": ("features/<slug>.md", "## Implementation"),
 }
+
+# Binding-target combinations that are allowed to auto-promote without
+# human review. Binding records are mechanical (file paths, pinned versions)
+# and not subject to the lesson quality gate.
+_BINDING_COMBOS: frozenset[tuple[str, str]] = frozenset({
+    ("features", "## Implementation"),
+    ("tech-stack", "## Active Dependencies"),
+})
+
+
+def _is_binding(target: str, section: str | None) -> bool:
+    """Return True when (target, section) is a binding-sync combination."""
+    if target == "features":
+        # Section is always Implementation for features.
+        return True
+    if target == "tech-stack" and section and section.strip().lstrip("#").strip() == "Active Dependencies":
+        return True
+    return False
 
 
 def _normalize_target(raw: str | None) -> str:
@@ -208,29 +245,90 @@ def _normalize_target(raw: str | None) -> str:
         return "tech-stack"
     if v in {"architecture", "arch", "architecture.md"}:
         return "architecture"
+    if v in {"features", "feature", "features.md"}:
+        return "features"
     return "L2"
 
 
+def _resolve_feature_path(linked_path: Path, slug: str) -> Path | None:
+    """Find features/*.md whose stem contains the slug (v5: under linked_path/hivemind/docs/features).
+
+    Accepts either `features/NN_<slug>.md` (the planner convention) or
+    `features/<slug>.md`. Returns None when nothing matches or multiple match.
+    """
+    from hivemind.core.paths import harness_spec_dir
+    features_dir = harness_spec_dir(linked_path) / "features"
+    if not features_dir.exists():
+        return None
+    slug_norm = slug.strip().lower().replace(" ", "-")
+    candidates = [
+        p for p in features_dir.glob("*.md")
+        if slug_norm in p.stem.lower()
+    ]
+    if len(candidates) != 1:
+        return None
+    return candidates[0]
+
+
+def _normalize_section_heading(raw: str | None) -> str | None:
+    """Allow callers to pass either 'Active Dependencies' or '## Active Dependencies'."""
+    if raw is None:
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    if not s.startswith("#"):
+        s = f"## {s}"
+    return s
+
+
 def _append_to_harness_doc(
-    data_path: Path,
-    project: str,
+    linked_path: Path,
     target: str,
     content: str,
     source_task: str,
     today: str,
+    *,
+    section: str | None = None,
+    feature_slug: str | None = None,
+    kind: str = "LEARNED",
 ) -> tuple[Path, bool]:
-    """Append a bullet to the target harness doc's Learned section.
+    """Append a bullet to a harness-doc section (v5: under linked_path/hivemind/docs/).
 
     Returns (file_path, appended). If an exact-string duplicate already
     exists in the section, the file is untouched and *appended* is False.
+
+    Keyword args:
+      - section: override the default section heading for the target. Pass
+        with or without leading '## '. For `tech-stack` the binding-sync
+        caller uses `"Active Dependencies"`.
+      - feature_slug: required when target == "features". The slug is
+        resolved to features/*.md via _resolve_feature_path.
+      - kind: tag inserted at the start of the bullet. Default "LEARNED"
+        for lessons; binding sync uses "BOUND" so readers can distinguish
+        mechanical entries from curated lessons.
     """
-    filename, heading = _HARNESS_TARGET_FILES[target]
-    path = data_path / "projects" / project / filename
+    from hivemind.core.paths import harness_spec_dir
+    default_filename, default_heading = _HARNESS_TARGET_FILES[target]
+    override = _normalize_section_heading(section)
+    heading = override or default_heading
+
+    if target == "features":
+        if not feature_slug:
+            raise ValueError("feature_slug is required when target='features'")
+        resolved = _resolve_feature_path(linked_path, feature_slug)
+        if resolved is None:
+            raise ValueError(
+                f"feature slug '{feature_slug}' did not match exactly one features/*.md"
+            )
+        path = resolved
+    else:
+        path = harness_spec_dir(linked_path) / default_filename
     path.parent.mkdir(parents=True, exist_ok=True)
 
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
     bullet_content = content.strip().replace("\n", " ")
-    bullet = f"- [LEARNED {today} from {source_task}] {bullet_content}"
+    bullet = f"- [{kind.upper()} {today} from {source_task}] {bullet_content}"
 
     # Dedup: exact-content match inside the Learned section
     if bullet_content in existing:
@@ -518,7 +616,30 @@ def save(project: str, content_file: str | None, title: str | None) -> None:
     help=(
         "Where to route the lesson on promote. "
         "L2=generic cross-project (default); "
-        "rules/tech-stack/architecture=project harness docs."
+        "rules/tech-stack/architecture/features=project harness docs."
+    ),
+)
+@click.option(
+    "--feature",
+    default=None,
+    help="Feature slug (required when --target=features). Matches features/*<slug>*.md.",
+)
+@click.option(
+    "--section",
+    default=None,
+    help=(
+        "Override the harness-doc section heading. Pass with or without '## ' prefix. "
+        "Used by binding sync — e.g. --target tech-stack --section 'Active Dependencies'."
+    ),
+)
+@click.option(
+    "--auto-promote",
+    is_flag=True,
+    default=False,
+    help=(
+        "Promote the draft immediately after saving. Only allowed for binding "
+        "combinations (--target features, or --target tech-stack --section 'Active Dependencies'). "
+        "Binding entries are mechanical and skip the lesson quality gate."
     ),
 )
 def draft_add(
@@ -528,10 +649,18 @@ def draft_add(
     content_file: str | None,
     category: str | None,
     target: str | None,
+    feature: str | None,
+    section: str | None,
+    auto_promote: bool,
 ) -> None:
     """Append a candidate lesson to the task's draft file (quality-gated).
 
     Exit code 0 on accept, 1 if the quality gate rejects the candidate.
+
+    Binding mode: pass --target features (with --feature) or --target tech-stack
+    --section 'Active Dependencies' to record a binding (file path / pinned
+    version) instead of a lesson. With --auto-promote, the entry is written to
+    the harness doc immediately and the quality gate is skipped.
     """
     if content_file is not None:
         content = Path(content_file).read_text(encoding="utf-8").strip()
@@ -543,30 +672,77 @@ def draft_add(
         raise SystemExit(1)
 
     data_path = _resolve_data_path(project)
-    accepted, reason = quality_gate(title, content, data_path)
-    if not accepted:
-        click.echo(f"Rejected: {reason}", err=True)
-        raise SystemExit(1)
-
     resolved_target = _normalize_target(target)
+    resolved_section = _normalize_section_heading(section)
+    is_binding = _is_binding(resolved_target, resolved_section)
+
+    # Cross-check argument combinations BEFORE invoking the quality gate
+    # so we surface usage errors first.
+    if resolved_target == "features" and not feature:
+        click.echo("Error: --feature is required when --target=features", err=True)
+        raise SystemExit(2)
+    if feature and resolved_target != "features":
+        click.echo("Error: --feature is only valid with --target=features", err=True)
+        raise SystemExit(2)
+    if auto_promote and not is_binding:
+        click.echo(
+            "Error: --auto-promote is only allowed for binding combinations "
+            "(--target=features, or --target=tech-stack --section='Active Dependencies').",
+            err=True,
+        )
+        raise SystemExit(2)
+
+    # Binding entries skip the lesson quality gate — they're mechanical
+    # records (file paths, pinned versions), not reusable lessons.
+    if not is_binding:
+        accepted, reason = quality_gate(title, content, data_path)
+        if not accepted:
+            click.echo(f"Rejected: {reason}", err=True)
+            raise SystemExit(1)
+
     cat = category or detect_category(title + "\n" + content)
+    draft_entry: dict[str, Any] = {
+        "title": title,
+        "category": cat,
+        "content": content,
+        "target": resolved_target,
+        "status": "pending",
+    }
+    if feature:
+        draft_entry["feature"] = feature
+    if resolved_section:
+        draft_entry["section"] = resolved_section
+    if is_binding:
+        draft_entry["kind"] = "BOUND"
+
     draft_path = _draft_path(data_path, project, task_id)
     data = _load_draft_file(draft_path)
     data["task_id"] = task_id
     data.setdefault("created", date.today().isoformat())
-    data["drafts"].append(
-        {
-            "title": title,
-            "category": cat,
-            "content": content,
-            "target": resolved_target,
-            "status": "pending",
-        }
-    )
+    data["drafts"].append(draft_entry)
     _save_draft_file(draft_path, data)
-    click.echo(
-        f"Draft saved: {draft_path} (target={resolved_target}, category={cat})"
-    )
+
+    if not auto_promote:
+        click.echo(
+            f"Draft saved: {draft_path} (target={resolved_target}, category={cat})"
+        )
+        return
+
+    # Auto-promote path: immediately write to the harness doc and mark
+    # the draft as promoted. Used by `/hv:task` step 11.5 (Harness sync).
+    today = date.today().isoformat()
+    linked_path = _resolve_linked_path(project)
+    try:
+        action, doc_path = _promote_to_target(
+            data_path, linked_path, project, draft_entry, resolved_target, task_id, today
+        )
+    except ValueError as exc:
+        click.echo(f"Auto-promote failed: {exc}", err=True)
+        raise SystemExit(1)
+    draft_entry["status"] = "promoted"
+    draft_entry["promoted_target"] = resolved_target
+    _save_draft_file(draft_path, data)
+    click.echo(f"Bound + promoted: {action} -> {doc_path}")
 
 
 @feedback.command(name="drafts")
@@ -592,11 +768,13 @@ _TARGET_PROMPT_MAP: dict[str, str] = {
     "2": "rules",
     "3": "tech-stack",
     "4": "architecture",
+    "5": "features",
 }
 
 
 def _promote_to_target(
     data_path: Path,
+    linked_path: Path | None,
     project: str,
     draft: dict[str, Any],
     target: str,
@@ -605,9 +783,14 @@ def _promote_to_target(
 ) -> tuple[str, Path]:
     """Execute the promote action for the chosen target.
 
+    L2 promotes use ``data_path`` (cross-project knowledge base).
+    Harness promotes use ``linked_path`` (project-local v5 location). Pass
+    ``linked_path=None`` to defer harness promotes (will raise).
+
     Returns (action_label, file_path). action_label is one of
     'L2-new', 'L2-update', 'harness-append', 'harness-duplicate'.
     """
+    del project  # kept for call-site clarity; no longer used for path computation
     if target == "L2":
         similar = find_similar(draft["content"], data_path, threshold=0.7)
         source_info = f"{task_id}:{today}"
@@ -620,14 +803,21 @@ def _promote_to_target(
         )
         return "L2-new", doc
 
-    # Harness-doc targets
+    # Harness-doc targets (including features). Pass through binding-specific
+    # fields stored on the draft.
+    if linked_path is None:
+        raise click.ClickException(
+            "Cannot promote to harness target: project is not linked."
+        )
     doc, appended = _append_to_harness_doc(
-        data_path,
-        project,
+        linked_path,
         target,
         draft["content"],
         task_id,
         today,
+        section=draft.get("section"),
+        feature_slug=draft.get("feature"),
+        kind=str(draft.get("kind") or "LEARNED"),
     )
     return ("harness-append" if appended else "harness-duplicate"), doc
 
@@ -652,6 +842,7 @@ def promote_drafts(project: str, task_id: str | None, auto: bool) -> None:
     append a dated bullet under the target file's Learned section.
     """
     data_path = _resolve_data_path(project)
+    linked_path = _resolve_linked_path(project)
     pending = _pending_drafts(data_path, project, task_id)
     if not pending:
         click.echo("No pending drafts.")
@@ -681,7 +872,7 @@ def promote_drafts(project: str, task_id: str | None, auto: bool) -> None:
             choice_target = suggested
         else:
             ans = click.prompt(
-                "Promote [1=L2, 2=rules, 3=tech-stack, 4=architecture, n=reject, s=skip]",
+                "Promote [1=L2, 2=rules, 3=tech-stack, 4=architecture, 5=features, n=reject, s=skip]",
                 default=default_choice,
                 show_default=True,
             ).strip().lower()
@@ -703,6 +894,7 @@ def promote_drafts(project: str, task_id: str | None, auto: bool) -> None:
 
         action, doc_path = _promote_to_target(
             data_path,
+            linked_path,
             project,
             d,
             choice_target,

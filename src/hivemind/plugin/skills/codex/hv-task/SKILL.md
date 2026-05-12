@@ -25,6 +25,7 @@ You (Orchestrator)
   ├── RUN verification commands from verify.md (YOU, Bash)
   ├── spawn Review Worker (subagent / worker, isolation: "worktree")
   ├── JUDGE: 4-axis rubric, blocking thresholds
+  ├── HARNESS SYNC: contract-drift guard + binding append to features/tech-stack
   ├── merge worker branch back, mark done, write report
   └── record tokens + cost in report frontmatter
 ```
@@ -218,6 +219,97 @@ If any axis is below its blocking threshold, OR the `Findings` section lists a `
 
 Record `review_scores` and `blocking_issues` for step 13.
 
+### 11.5. Harness sync (Binding-only)
+
+Runs after review passes and BEFORE merge. Keeps `features/*.md ## Implementation` and `tech-stack.md ## Active Dependencies` synchronized with reality. **Records binding info only — never contract changes** (see drift guard below).
+
+#### Skip condition (cheap pre-check)
+
+Compute `changed_files = git -C <worktree> diff <base>..HEAD --name-only`. Skip the entire step if BOTH hold:
+
+- Every non-test source file in `changed_files` is already mentioned in some `features/*.md ## Implementation` section.
+- No manifest file (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `Gemfile`, `composer.json`, `pom.xml`, `*.csproj`) is in `changed_files`.
+
+Log `harness sync: no-op (all touched files already documented)` and proceed to step 12.
+
+#### Contract-drift guard (must run BEFORE any binding append)
+
+A *contract* is anything the spec promises (function names, endpoint paths, NEVER/ALWAYS rules). Tasks may add bindings; they must NOT silently change a contract.
+
+Run these heuristic checks against the diff. Use **string match** against `{data_path}/projects/{project}/features/*.md` and `rules.md`:
+
+1. **Removed function / endpoint identifiers** — for each `-` line in the diff matching one of the following patterns, extract the identifier:
+   - `function <name>(`, `<name> = (` arrow, `const <name> = (`
+   - `app.(get|post|put|delete|patch)('<path>'`, `router.(get|post|...)\('<path>'`
+   - `def <name>(`, `async def <name>(`
+   - `@app.(get|post|...)('<path>')`
+   - `func <name>(`, `mux.HandleFunc('<path>'`
+   
+   For each extracted identifier or path, grep the spec corpus. If found anywhere → **contract drift**.
+
+2. **Signature mismatch** — for each function still present in the diff (both `-` and `+` lines for the same `def`/`function`), if the parameter count changed (count commas between `(` and `)` of the signature), and the OLD signature substring appears in any spec file → **contract drift**.
+
+3. **Comment-encoded rule contradicting `rules.md`** — extract added comment lines matching `//\s*NEVER`, `//\s*ALWAYS`, `#\s*NEVER`, `#\s*ALWAYS`. If the same subject is already governed in `rules.md` with the opposite verb (e.g. diff says `// ALWAYS use redis` and `rules.md` says `NEVER use redis`) → **contract drift**.
+
+On ANY drift hit — STOP. Do not merge. Do not run the binding appends.
+
+```bash
+hv task update <TASK-ID> --status blocked --reason "contract-drift: <one-line evidence>"
+```
+
+Add `## Incident` to the report with: which identifier/path drifted, which spec mentions it, the offending diff line. Inform the user: "This task changed something the spec promises. Re-plan via `/hv:plan` before retrying."
+
+Worker retry: max **1** (the worker can revert the contract change — they cannot edit the spec to match).
+
+#### Binding appends (only after drift guard passes)
+
+**File-path binding.** For each unlisted non-test source file in `changed_files`:
+
+1. Determine which feature to bind it under by reading the task body's `## Spec References`. These reference one or more `projects/{project}/features/00_<slug>.md`. Use the slug from the most specific reference; if multiple references apply, choose the feature whose body text mentions the file's directory most often.
+
+2. Append:
+
+   ```bash
+   echo "\`<path>\` — <one-line role from your verification observation>" | \
+     hv feedback draft-add \
+       -p <project> --task <TASK-ID> \
+       --title "Implementation: <path>" \
+       --target features --feature <slug> \
+       --auto-promote
+   ```
+
+   `--auto-promote` skips the lesson quality gate (binding entries are mechanical, not reusable lessons) and writes immediately under `## Implementation`. Exit 0 = appended; output `harness-duplicate` = already present, no-op.
+
+**Dep binding.** If any manifest file is in `changed_files`:
+
+1. Compare manifest before/after the task:
+   ```bash
+   git -C <worktree> show <base>:package.json > /tmp/pkg-before.json
+   diff /tmp/pkg-before.json <worktree>/package.json
+   ```
+2. For each *added* dependency, append:
+   ```bash
+   echo "<name> <version> — <one-line role>" | hv feedback draft-add \
+     -p <project> --task <TASK-ID> \
+     --title "Add dep: <name>@<version>" \
+     --target tech-stack --section "Active Dependencies" \
+     --auto-promote
+   ```
+3. For each *removed* dependency: do NOT auto-remove from `tech-stack.md`. Could be intentional cleanup or temporary. Instead, in the report's `## Notes`, list: `removed deps not auto-pruned from tech-stack.md: <list>`. The user prunes manually on confirmation.
+
+#### After sync
+
+Re-read each touched harness doc to confirm appends took. Record outcomes in the report:
+
+```
+## Harness Sync
+- features/00_<slug>.md += `<path>` (BOUND)
+- tech-stack.md ## Active Dependencies += <name> <version> (BOUND)
+- removed deps (manual review): <list, if any>
+```
+
+If every binding returned `harness-duplicate`, log: `harness sync: idempotent — already in sync`.
+
 ### 12. Merge worker branch + mark done
 
 Merge the worker's branch into the main branch of the project repo (single worktree merge for sequential; one-at-a-time for parallel):
@@ -239,6 +331,7 @@ Only proceed to step 12 after ALL of:
 - Every completion criterion marked [PASS]
 - All verification commands pass
 - 4-axis rubric has no blocking scores and no blocking Findings
+- Step 11.5 completed without contract-drift block (binding appends may be no-ops; that's fine)
 
 ### 13. Record execution report
 
@@ -378,6 +471,7 @@ If `parallel.max_concurrency = 1` or `--sequential` is passed: fall back to the 
 | Coding | 2 | `send_input` to same worker | Block |
 | Verification | 2 | `send_input` with output | Block |
 | Review | 1 | `send_input` with review | Block |
+| Harness sync (contract-drift) | 1 | `send_input` "revert contract change; keep binding-only" | Block — `contract-drift` reason |
 
 Blocked task:
 ```bash
@@ -401,3 +495,6 @@ Record incident in report, proceed to next task (do NOT stop the pipeline).
 - **ALWAYS** estimate tokens and compute cost for the report. Use `hv config pricing --target codex`.
 - **ALWAYS** run `hv` CLI commands via the Bash tool.
 - **NEVER** write reports or feedback in Korean. English only for BM25 consistency.
+- **NEVER skip step 11.5** for normal tasks. Skip-condition (no unlisted files AND no manifest change) is fine; explicit skip is not.
+- **NEVER edit a feature's contract via task code.** The contract-drift guard blocks removed/renamed identifiers found in specs; the resolution is `/hv:plan`, not silent code change.
+- **ALWAYS** use `hv feedback draft-add --auto-promote` (target features or target tech-stack with `--section "Active Dependencies"`) for binding sync. Do not write to harness docs directly.

@@ -272,8 +272,12 @@ def _check_verify_md(
     if not project:
         return _warn("Project verify.md", "skipped (link has no project name)")
 
-    data_path = cfg.data_path
-    project_spec_dir = data_path / "projects" / str(project)
+    # v5: specs live under <project_dir>/hivemind/docs. Pre-v5 fallback to
+    # <data_path>/projects/<name>/ if the v5 location doesn't exist yet.
+    from hivemind.core.paths import harness_spec_dir
+    v5_spec_dir = harness_spec_dir(project_dir)
+    legacy_spec_dir = cfg.data_path / "projects" / str(project)
+    project_spec_dir = v5_spec_dir if v5_spec_dir.exists() else legacy_spec_dir
     verify_md = project_spec_dir / "verify.md"
     legacy = project_spec_dir / "build-verify.md"
 

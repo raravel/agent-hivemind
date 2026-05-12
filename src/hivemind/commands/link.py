@@ -10,7 +10,6 @@ import click
 
 from hivemind.core.config import (
     HivemindConfig,
-    data_path_for_storage,
     expand_target_selection,
 )
 from hivemind.core.git import auto_commit
@@ -156,7 +155,6 @@ def link_project(
     changed = write_instruction_files(
         project_dir,
         project=resolved_name,
-        data_path=data_path_for_storage(data_path),
         targets=requested_targets,
     )
     for file_name in changed:

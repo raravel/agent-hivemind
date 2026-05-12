@@ -1,4 +1,4 @@
-# Harness Quality Rubric (v1)
+# Harness Quality Rubric (v2)
 
 Each axis scores 0–10. Use the anchor levels below. Interpolate when between anchors; round to the nearest integer.
 
@@ -24,22 +24,23 @@ Penalize when the diagram references components not defined in prose, or vice ve
 
 Judge `features/*.md` collectively. If none exist, score 0.
 
-Per file, check three anchors:
+Per file, check four sub-anchors:
 - has **Inputs / parameters** section (named explicitly or via a structured list)
 - has **Outputs / return / response** section
 - has **Error cases / edge cases** section
+- has **`## Implementation`** section listing at least one in-tree file path (code↔spec map maintained by `/hv:task` step 11.5)
 
-Score is driven by the *proportion* of feature files satisfying each anchor, normalized to 10.
+Score is driven by the *proportion* of feature files satisfying each sub-anchor, normalized to 10.
 
 | Score | Anchor |
 |-------|--------|
 | 0 | No feature files, or files exist but are placeholders (< 20 lines, no structure). |
-| 3 | Files exist with a description only — no explicit inputs/outputs/error sections. |
-| 5 | ≥ 50% of feature files cover inputs + outputs; few or none cover error cases. |
-| 7 | ≥ 80% cover inputs + outputs; ≥ 50% cover error cases. |
-| 10 | ≥ 90% of feature files cover all three anchors; at least one file uses a data-model or sequence diagram. |
+| 3 | Files exist with a description only — no explicit inputs/outputs/error sections; no `## Implementation`. |
+| 5 | ≥ 50% of feature files cover inputs + outputs; few or none cover error cases or `## Implementation`. |
+| 7 | ≥ 80% cover inputs + outputs; ≥ 50% cover error cases; ≥ 50% have `## Implementation` with at least one path. |
+| 10 | ≥ 90% of feature files cover all four sub-anchors (inputs + outputs + errors + `## Implementation`); at least one file uses a data-model or sequence diagram. |
 
-Penalize files that are effectively empty (TBD placeholders, one-liners).
+Penalize files that are effectively empty (TBD placeholders, one-liners). A `## Implementation` section that lists only `TBD` or `<path>` placeholders does not count.
 
 ---
 
@@ -61,15 +62,19 @@ Call out contradictions or duplicates explicitly in `rationale`.
 
 Inspect `tech-stack.md`. Count libraries (any `- name` or `| name |` entry that names a package).
 
+`/hv:plan` Phase 0 grounds this file in detected manifests + build artifacts. The rubric rewards that grounding: a doc that contradicts the manifest is worse than a sparse-but-truthful doc.
+
 | Score | Anchor |
 |-------|--------|
 | 0 | File missing or lists no libraries. |
 | 3 | Lists libraries; no versions; no usage examples. |
 | 5 | ≥ 50% of libraries have a version; few or no usage examples. |
 | 7 | ≥ 80% have versions; ≥ 50% have an import/usage example or brief rationale. |
-| 10 | ≥ 90% have versions; ≥ 80% have usage examples; includes at least one "why this, not X" rationale. |
+| 10 | ≥ 90% have versions; ≥ 80% have usage examples or rationale; includes at least one "why this, not X" rationale; AND has a `## Active Dependencies` section grounded in a manifest (or a `## Legacy / Vendored` section that explicitly explains why a listed library is not in any manifest). |
 
 A version is any pinned form: `1.2.3`, `^1.2`, `>=1.0,<2`, `~=1.2`. `latest`/`stable` does not count.
+
+**Manifest-contradiction cap (v2 addition):** if you can identify a library listed under `## Active Dependencies` (or equivalent role section) whose name does NOT appear in any detected manifest file in the repo (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, etc.), **cap the final score at 5** and cite the contradiction in `rationale`. Libraries belonging in `## Legacy / Vendored` (vendored as static assets) are exempt from this cap, but they must be in that section, not `## Active Dependencies`.
 
 ---
 
@@ -89,9 +94,11 @@ Stages to recognize (by keywords in command):
 | 3 | 1 command total; covers only 1 stage. |
 | 5 | 2+ commands; covers 2 stages. |
 | 7 | Covers 3 stages; includes at least one project-specific command (not just stock `pytest` etc.). |
-| 10 | Covers all 4 stages OR explicitly justifies which stages don't apply (e.g. "no build step for library-only repos"); each command has a one-line purpose. |
+| 10 | Covers all 4 stages OR explicitly justifies each absent stage by name (e.g. "no `lint` stage — repository has no JS source"); each command has a one-line purpose. |
 
 Favor language-agnostic phrasing: hard-coded `ruff/mypy/pytest` in a polyglot project is a minor deduction (-1), since the project's actual stack may differ.
+
+**Justification specificity (v2 addition):** a vague justification such as "we don't need that" or "N/A" does NOT count toward anchor 10. The justification must name the absent stage explicitly and give a reason tied to the project's actual scope (e.g. "no `type` stage — repository is plain Python without type hints in source").
 
 ---
 

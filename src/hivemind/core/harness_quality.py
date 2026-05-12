@@ -18,7 +18,7 @@ from typing import Any
 # Bump when the rubric in score-harness/references/rubric.md changes in a
 # way that invalidates previous scores. Scores with an older rubric_version
 # are shown as "stale (rubric v%d)" and not counted as fresh.
-RUBRIC_VERSION = 1
+RUBRIC_VERSION = 2
 
 # Files considered part of the harness for hashing. Missing files are skipped
 # silently; the hash of an empty harness is still deterministic.
@@ -85,12 +85,12 @@ class HarnessScore:
         }
 
 
-def harness_spec_dir(data_path: Path, project: str) -> Path:
-    return data_path / "projects" / project
-
-
-def scores_path(data_path: Path, project: str) -> Path:
-    return harness_spec_dir(data_path, project) / "_harness_scores.jsonl"
+# Path helpers were promoted to hivemind.core.paths in v5. Re-export so any
+# straggler callers continue to work without churn.
+from hivemind.core.paths import (  # noqa: E402,F401  (intentional re-export)
+    harness_scores_path as scores_path,
+    harness_spec_dir,
+)
 
 
 def hash_harness(spec_dir: Path) -> str:
@@ -118,9 +118,9 @@ def hash_harness(spec_dir: Path) -> str:
     return "sha256:" + h.hexdigest()
 
 
-def append_score(data_path: Path, project: str, score: HarnessScore) -> Path:
+def append_score(linked_path: Path, score: HarnessScore) -> Path:
     """Append a HarnessScore as one JSONL line. Returns the file path."""
-    path = scores_path(data_path, project)
+    path = scores_path(linked_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(score.to_dict(), ensure_ascii=False))
@@ -128,9 +128,9 @@ def append_score(data_path: Path, project: str, score: HarnessScore) -> Path:
     return path
 
 
-def load_scores(data_path: Path, project: str) -> list[HarnessScore]:
+def load_scores(linked_path: Path) -> list[HarnessScore]:
     """Read all historical scores. Malformed lines are skipped silently."""
-    path = scores_path(data_path, project)
+    path = scores_path(linked_path)
     if not path.exists():
         return []
     out: list[HarnessScore] = []
@@ -145,8 +145,8 @@ def load_scores(data_path: Path, project: str) -> list[HarnessScore]:
     return out
 
 
-def latest_score(data_path: Path, project: str) -> HarnessScore | None:
-    scores = load_scores(data_path, project)
+def latest_score(linked_path: Path) -> HarnessScore | None:
+    scores = load_scores(linked_path)
     return scores[-1] if scores else None
 
 

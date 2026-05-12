@@ -66,8 +66,15 @@ def _invoke(tmp_path: Path, args: list[str]) -> Any:
 
 
 def _create_spec_file(data_path: Path, project: str, name: str, content: str) -> Path:
-    """Create a spec markdown file in projects/{project}/."""
-    spec_dir = data_path / "projects" / project
+    """Create a spec markdown file at the v5 location: ``<linked>/hivemind/docs/``.
+
+    Note: ``data_path`` arg is preserved for backward-compat with callers but
+    the test fixtures need ``linked_path`` for v5. The fixture's linked_path
+    is derived from data_path's parent (``tmp_path``) per ``_make_workspace``.
+    """
+    # _make_workspace puts linked_path at tmp_path/code; data_path at tmp_path/data
+    linked_path = data_path.parent / "code"
+    spec_dir = linked_path / "hivemind" / "docs"
     spec_dir.mkdir(parents=True, exist_ok=True)
     spec_file = spec_dir / name
     spec_file.write_text(content, encoding="utf-8")
@@ -176,18 +183,18 @@ class TestFindStaleTasks:
 
 
 class TestLoadSpecFiles:
-    """Tests for _load_spec_files."""
+    """Tests for _load_spec_files (v5: reads from linked_path/hivemind/docs)."""
 
     def test_loads_spec_files(self, tmp_path: Path) -> None:
-        spec_dir = tmp_path / "projects" / "myproj"
+        spec_dir = tmp_path / "hivemind" / "docs"
         spec_dir.mkdir(parents=True)
         (spec_dir / "feature-a.md").write_text("content", encoding="utf-8")
         (spec_dir / "feature-b.md").write_text("content", encoding="utf-8")
-        result = _load_spec_files(tmp_path, "myproj")
+        result = _load_spec_files(tmp_path)
         assert len(result) == 2
 
     def test_returns_empty_for_missing_dir(self, tmp_path: Path) -> None:
-        result = _load_spec_files(tmp_path, "nonexistent")
+        result = _load_spec_files(tmp_path)
         assert result == []
 
 
@@ -198,7 +205,7 @@ class TestAuditReport:
         _config_path, data_path = _make_workspace(tmp_path)
 
         # Create project spec dir (empty — no specs)
-        (data_path / "projects" / "myproj").mkdir(parents=True, exist_ok=True)
+        (data_path.parent / "code" / "hivemind" / "docs").mkdir(parents=True, exist_ok=True)
         # Create tasks dir
         (data_path / "tasks" / "myproj").mkdir(parents=True, exist_ok=True)
 
@@ -232,7 +239,7 @@ class TestAuditReport:
 
     def test_reports_stale_tasks(self, tmp_path: Path) -> None:
         _config_path, data_path = _make_workspace(tmp_path)
-        (data_path / "projects" / "myproj").mkdir(parents=True, exist_ok=True)
+        (data_path.parent / "code" / "hivemind" / "docs").mkdir(parents=True, exist_ok=True)
 
         old_date = (date.today() - timedelta(days=45)).isoformat()
         _create_task_with_fm(data_path, "myproj", "MP-001", "done", old_date)
@@ -247,7 +254,7 @@ class TestAuditReport:
 
     def test_clean_report(self, tmp_path: Path) -> None:
         _config_path, data_path = _make_workspace(tmp_path)
-        (data_path / "projects" / "myproj").mkdir(parents=True, exist_ok=True)
+        (data_path.parent / "code" / "hivemind" / "docs").mkdir(parents=True, exist_ok=True)
         (data_path / "tasks" / "myproj").mkdir(parents=True, exist_ok=True)
 
         # Spec references src/app.py which exists in code
@@ -265,7 +272,7 @@ class TestAuditReport:
 
     def test_fix_flag_shows_suggestions(self, tmp_path: Path) -> None:
         _config_path, data_path = _make_workspace(tmp_path)
-        (data_path / "projects" / "myproj").mkdir(parents=True, exist_ok=True)
+        (data_path.parent / "code" / "hivemind" / "docs").mkdir(parents=True, exist_ok=True)
         (data_path / "tasks" / "myproj").mkdir(parents=True, exist_ok=True)
 
         with patch("hivemind.commands.audit._git_ls_files", return_value=["src/new.py"]):
@@ -280,7 +287,8 @@ class TestAuditReport:
 
         result = _invoke(tmp_path, ["-p", "nonexistent"])
         assert result.exit_code != 0
-        assert "not found" in result.output
+        # v5: paths.linked_path_for raises a "not linked" message
+        assert "not linked" in result.output or "not found" in result.output
 
     def test_combined_issues(self, tmp_path: Path) -> None:
         """Test report with all three issue types present."""
@@ -307,3 +315,164 @@ class TestAuditReport:
         assert "MP-010" in result.output
         # src/gone.py IS in code, so it should NOT appear in spec-without-code
         assert "referenced module not found: src/gone.py" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Tech-stack drift (`hv audit --tech-stack`)
+# ---------------------------------------------------------------------------
+
+
+from hivemind.commands.audit import (  # noqa: E402
+    _extract_active_dependencies,
+    _read_manifest_deps,
+    run_tech_stack_audit,
+)
+
+
+class TestReadManifestDeps:
+    def test_package_json(self, tmp_path: Path) -> None:
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "dependencies": {"express": "^5.1.0", "ejs": "^3.1.10"},
+                    "devDependencies": {"nodemon": "^3.1.10"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = _read_manifest_deps(tmp_path)
+        assert "package.json" in result
+        assert result["package.json"] == {"express", "ejs", "nodemon"}
+
+    def test_pyproject_toml_pep621(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname="x"\ndependencies = [\n  "click >=8.1",\n  "frontmatter==1.1.0",\n]\n',
+            encoding="utf-8",
+        )
+        result = _read_manifest_deps(tmp_path)
+        assert "pyproject.toml" in result
+        # Regex picks up names followed by version constraints
+        assert "click" in result["pyproject.toml"]
+        assert "frontmatter" in result["pyproject.toml"]
+
+    def test_go_mod(self, tmp_path: Path) -> None:
+        (tmp_path / "go.mod").write_text(
+            "module example.com/x\n\ngo 1.22\n\nrequire (\n  github.com/foo/bar v1.0.0\n  github.com/baz/qux v2.3.4\n)\n",
+            encoding="utf-8",
+        )
+        result = _read_manifest_deps(tmp_path)
+        assert result["go.mod"] == {"github.com/foo/bar", "github.com/baz/qux"}
+
+    def test_missing_manifests_skipped(self, tmp_path: Path) -> None:
+        result = _read_manifest_deps(tmp_path)
+        assert result == {}
+
+
+class TestExtractActiveDependencies:
+    def test_list_items_under_active_dependencies(self, tmp_path: Path) -> None:
+        path = tmp_path / "tech-stack.md"
+        path.write_text(
+            "# Tech\n\n## Active Dependencies\n"
+            "- express ^5.1.0 — HTTP server\n"
+            "- ejs ^3.1.10 — templates\n\n"
+            "## Project Structure\n- some/dir\n",
+            encoding="utf-8",
+        )
+        out = _extract_active_dependencies(path)
+        assert out == ["express", "ejs"]
+
+    def test_section_absent_returns_empty(self, tmp_path: Path) -> None:
+        path = tmp_path / "tech-stack.md"
+        path.write_text("# Tech\n\n## Project Structure\n- foo\n", encoding="utf-8")
+        assert _extract_active_dependencies(path) == []
+
+    def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
+        assert _extract_active_dependencies(tmp_path / "no.md") == []
+
+
+class TestTechStackAudit:
+    def _setup(self, tmp_path: Path) -> tuple[Path, Path]:
+        config_path, data_path = _make_workspace(tmp_path)
+        code_path = tmp_path / "code"
+        code_path.mkdir(exist_ok=True)
+        return data_path, code_path
+
+    def test_doc_without_manifest_flagged(self, tmp_path: Path) -> None:
+        data_path, code_path = self._setup(tmp_path)
+        (code_path / "package.json").write_text(
+            json.dumps({"dependencies": {"express": "^5.1.0"}}),
+            encoding="utf-8",
+        )
+        spec_dir = data_path.parent / "code" / "hivemind" / "docs"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        (spec_dir / "tech-stack.md").write_text(
+            "## Active Dependencies\n- express ^5.1.0\n- tailwindcss v3\n",
+            encoding="utf-8",
+        )
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            report = run_tech_stack_audit("myproj")
+        finally:
+            os.chdir(old_cwd)
+        assert "Doc claims but manifest disagrees" in report
+        assert "tailwindcss" in report
+
+    def test_manifest_without_doc_flagged(self, tmp_path: Path) -> None:
+        data_path, code_path = self._setup(tmp_path)
+        (code_path / "package.json").write_text(
+            json.dumps({"dependencies": {"express": "^5.1.0", "ejs": "^3.1.10"}}),
+            encoding="utf-8",
+        )
+        spec_dir = data_path.parent / "code" / "hivemind" / "docs"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        (spec_dir / "tech-stack.md").write_text(
+            "## Active Dependencies\n- express ^5.1.0\n",
+            encoding="utf-8",
+        )
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            report = run_tech_stack_audit("myproj")
+        finally:
+            os.chdir(old_cwd)
+        assert "Manifest has but doc missing" in report
+        assert "ejs" in report
+
+    def test_in_sync_reports_no_drift(self, tmp_path: Path) -> None:
+        data_path, code_path = self._setup(tmp_path)
+        (code_path / "package.json").write_text(
+            json.dumps({"dependencies": {"express": "^5.1.0"}}),
+            encoding="utf-8",
+        )
+        spec_dir = data_path.parent / "code" / "hivemind" / "docs"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        (spec_dir / "tech-stack.md").write_text(
+            "## Active Dependencies\n- express ^5.1.0\n",
+            encoding="utf-8",
+        )
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            report = run_tech_stack_audit("myproj")
+        finally:
+            os.chdir(old_cwd)
+        assert "No tech-stack drift found" in report
+        assert "Total: 0 issues" in report
+
+    def test_cli_flag_routes_to_tech_stack_audit(self, tmp_path: Path) -> None:
+        data_path, code_path = self._setup(tmp_path)
+        (code_path / "package.json").write_text(
+            json.dumps({"dependencies": {"express": "^5.1.0"}}),
+            encoding="utf-8",
+        )
+        spec_dir = data_path.parent / "code" / "hivemind" / "docs"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        (spec_dir / "tech-stack.md").write_text(
+            "## Active Dependencies\n- express ^5.1.0\n", encoding="utf-8"
+        )
+        result = _invoke(tmp_path, ["-p", "myproj", "--tech-stack"])
+        assert result.exit_code == 0, result.output
+        assert "Tech-Stack Drift" in result.output
+        # Default code/spec drift output should NOT appear in --tech-stack mode
+        assert "Drift Report" not in result.output
