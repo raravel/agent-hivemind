@@ -52,21 +52,33 @@ def _register_project(
     project: str,
     *,
     prefix: str = "TST",
-    linked_path: str = "",
-) -> None:
-    """Register a project in .hivemind.json and create its directories."""
+    linked_path: str | None = None,
+) -> Path:
+    """Register a project in .hivemind.json and create its v5 directories.
+
+    When *linked_path* is not provided, a sibling dir
+    ``<data_path>/../<project>-repo`` is used. Project-specific artifacts
+    live under ``<linked_path>/hivemind/`` per the v5 layout; only the
+    cross-project ``level3/<project>/`` stays in the data dir.
+    """
     config_path = data_path / ".hivemind.json"
     cfg = HivemindConfig.load(config_path)
-    cfg.set_project(project, prefix, linked_path)
+    if linked_path is None:
+        linked = data_path.parent / f"{project}-repo"
+    else:
+        linked = Path(linked_path)
+    linked.mkdir(parents=True, exist_ok=True)
+    cfg.set_project(project, prefix, str(linked))
     cfg.save()
 
     for d in (
-        data_path / "projects" / project,
-        data_path / "tasks" / project,
-        data_path / "tasks" / project / "_reports",
+        linked / "hivemind" / "docs",
+        linked / "hivemind" / "tasks" / "_reports",
         data_path / "level3" / project,
     ):
         d.mkdir(parents=True, exist_ok=True)
+
+    return linked
 
 
 def _invoke(
@@ -168,15 +180,16 @@ class TestInitAndLink:
         assert result.exit_code == 0, result.output
         assert "test-project" in result.output
 
-        # Verify .hivemind-link.json was created
-        link_file = project_dir / ".hivemind-link.json"
+        # v5: link.json lives at <project_dir>/hivemind/link.json
+        link_file = project_dir / "hivemind" / "link.json"
         assert link_file.exists()
         link_data = json.loads(link_file.read_text(encoding="utf-8"))
         assert link_data["project"] == "test-project"
 
-        # Verify project directories created in data repo
-        assert (data_path / "projects" / "test-project").is_dir()
-        assert (data_path / "tasks" / "test-project").is_dir()
+        # v5: project artifacts live inside the linked repo; only level3/
+        # stays in the data dir.
+        assert (project_dir / "hivemind" / "docs").is_dir()
+        assert (project_dir / "hivemind" / "tasks").is_dir()
 
         # Verify project registered in .hivemind.json
         # link_cmd writes to the config it found (in project_dir cwd)
@@ -642,14 +655,14 @@ class TestStatsFlow:
     def test_stats_with_reports(self, tmp_path: Path) -> None:
         data_path = tmp_path / "hv-data"
         _init_workspace(data_path)
-        _register_project(data_path, "test-project")
+        linked = _register_project(data_path, "test-project")
 
         cfg = HivemindConfig.load(data_path / ".hivemind.json")
         cfg.set("data_path", str(data_path))
         cfg.save()
 
-        # Create sample report files
-        reports_dir = data_path / "tasks" / "test-project" / "_reports"
+        # v5: reports live at <linked>/hivemind/tasks/_reports/
+        reports_dir = linked / "hivemind" / "tasks" / "_reports"
         reports_dir.mkdir(parents=True, exist_ok=True)
 
         for i, (dur, retries, review, lint) in enumerate(
