@@ -49,7 +49,11 @@ def migrate_v3_to_v4(config_path: Path) -> bool:
     if not isinstance(data, dict):
         return False
 
-    if data.get("version") == SCHEMA_V4:
+    current_version = data.get("version")
+    # v3→v4 only runs on actually-pre-v4 configs. v5+ configs leave it
+    # alone — otherwise reading a fresh-installed v5 config through this
+    # path would silently downgrade it back to v4.
+    if isinstance(current_version, str) and current_version >= SCHEMA_V4:
         return False
 
     changed = False

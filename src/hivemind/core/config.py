@@ -18,7 +18,7 @@ from typing import Any
 
 CONFIG_FILENAME = ".hivemind.json"
 DEFAULT_DATA_PATH = "~/agent-hivemind-data"
-SCHEMA_VERSION = "4.0.0"
+SCHEMA_VERSION = "5.0.0"
 SUPPORTED_TARGETS = ("claude", "codex")
 
 # Per-Mtoken USD pricing, seeded from public Anthropic pricing. Users may

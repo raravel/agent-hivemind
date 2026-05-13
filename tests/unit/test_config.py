@@ -31,7 +31,7 @@ class TestDefaultConfig:
     def test_version(self) -> None:
         cfg = default_config()
         assert cfg["version"] == SCHEMA_VERSION
-        assert cfg["version"] == "4.0.0"
+        assert cfg["version"] == "5.0.0"
 
     def test_has_all_top_level_keys(self) -> None:
         cfg = default_config()
@@ -178,7 +178,7 @@ class TestGetSet:
 
     def test_get_top_level(self, tmp_path: Path) -> None:
         cfg = self._make_config(tmp_path)
-        assert cfg.get("version") == "4.0.0"
+        assert cfg.get("version") == "5.0.0"
 
     def test_get_nested(self, tmp_path: Path) -> None:
         cfg = self._make_config(tmp_path)

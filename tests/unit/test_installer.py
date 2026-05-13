@@ -402,7 +402,7 @@ class TestInstallProfiles:
 
         loaded = HivemindConfig.load(config_path)
         assert loaded.get("model_profile") == "quality"
-        assert loaded.get("version") == "4.0.0"
+        assert loaded.get("version") == "5.0.0"
 
     def test_seeds_runtime_models_when_profiles_already_exist(self, tmp_path: Path) -> None:
         data = default_config()

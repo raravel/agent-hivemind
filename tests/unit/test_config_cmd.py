@@ -50,7 +50,7 @@ class TestConfigNoArgs:
             result = runner.invoke(config_cmd, [])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
-        assert parsed["version"] == "4.0.0"
+        assert parsed["version"] == "5.0.0"
         assert "profiles" in parsed
 
     def test_output_is_valid_json(
