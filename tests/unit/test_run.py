@@ -85,7 +85,7 @@ class TestRunWithTaskId:
         result = _invoke_run(tmp_path, ["--task", "MP-001", "--format", "json"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        assert data["id"] == "MP-001"
+        assert str(data["id"]).startswith("MP-001-")
         assert data["frontmatter"]["title"] == "JSON task"
         assert "body" in data
         assert "path" in data
@@ -170,7 +170,7 @@ class TestSkipsContainers:
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert data["frontmatter"]["type"] == "task"
-        assert data["id"] == "MP-003"
+        assert str(data["id"]).startswith("MP-003-")
 
     def test_no_leaf_returns_no_tasks(self, tmp_path: Path) -> None:
         _make_workspace(tmp_path)
@@ -205,7 +205,7 @@ class TestFormatJson:
         assert "frontmatter" in data
         assert "body" in data
         assert "path" in data
-        assert data["id"] == "MP-001"
+        assert str(data["id"]).startswith("MP-001-")
         assert isinstance(data["frontmatter"], dict)
         assert data["frontmatter"]["title"] == "My task"
 

@@ -71,6 +71,31 @@ def _tasks_dir(tmp_path: Path, project: str = "myproj") -> Path:
     return tmp_path / project / "hivemind" / "tasks"
 
 
+def _task_file(tmp_path: Path, short_id: str, project: str = "myproj") -> Path:
+    """Resolve ``MP-001`` short form to the v5.1 hash-suffixed file.
+
+    Falls back to the legacy ``MP-001.md`` (no hash) if the new form is
+    absent — keeps test fixtures portable between layouts.
+    """
+    tasks = _tasks_dir(tmp_path, project)
+    legacy = tasks / f"{short_id}.md"
+    if legacy.exists():
+        return legacy
+    matches = sorted(tasks.glob(f"{short_id}-*.md"))
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise AssertionError(
+            f"Ambiguous short ID {short_id!r}: {[p.name for p in matches]}"
+        )
+    raise FileNotFoundError(f"No task matching {short_id!r} in {tasks}")
+
+
+def _task_id(tmp_path: Path, short_id: str, project: str = "myproj") -> str:
+    """Return the canonical full task ID (file stem) for *short_id*."""
+    return _task_file(tmp_path, short_id, project).stem
+
+
 class TestCreate:
     """Tests for `hv task create`."""
 
@@ -125,11 +150,9 @@ class TestCreate:
         )
         assert result.exit_code == 0, result.output
 
-        task_file = _tasks_dir(tmp_path) / "MP-001.md"
-        assert task_file.exists()
-
+        task_file = _task_file(tmp_path, "MP-001")
         fm, body = parse_task(task_file)
-        assert fm["id"] == "MP-001"
+        assert str(fm["id"]).startswith("MP-001-")
         assert fm["title"] == "Test task"
         assert fm["status"] == "pending"
         assert fm["priority"] == "high"
@@ -137,6 +160,74 @@ class TestCreate:
         assert fm["depends_on"] == ["MP-000"]
         assert "created" in fm
         assert "updated" in fm
+
+    def test_short_form_parent_resolves_to_canonical(self, tmp_path: Path) -> None:
+        """`--parent MP-001` is normalized to the hash-suffixed canonical ID
+        so the parent reference survives if two collaborators allocate the
+        same number on different branches."""
+        _make_workspace(tmp_path)
+        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Epic", "--type", "epic"])
+        _invoke(
+            tmp_path,
+            [
+                "create", "-p", "myproj", "-t", "Story",
+                "--type", "story", "--parent", "MP-001",
+            ],
+        )
+        canonical_epic = _task_id(tmp_path, "MP-001")
+        story_fm, _ = parse_task(_task_file(tmp_path, "MP-002"))
+        assert story_fm["parent"] == canonical_epic
+
+    def test_short_form_depends_resolves_to_canonical(self, tmp_path: Path) -> None:
+        _make_workspace(tmp_path)
+        _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Base"])
+        _invoke(
+            tmp_path,
+            ["create", "-p", "myproj", "-t", "Dependent", "--depends", "MP-001"],
+        )
+        canonical_base = _task_id(tmp_path, "MP-001")
+        dep_fm, _ = parse_task(_task_file(tmp_path, "MP-002"))
+        assert dep_fm["depends_on"] == [canonical_base]
+
+
+class TestTaskIdConflictResolution:
+    """Tests for the merge-conflict avoidance properties of hash-suffixed IDs."""
+
+    def test_two_files_same_number_coexist(self, tmp_path: Path) -> None:
+        """Files like MP-013-aaaa.md and MP-013-bbbb.md can coexist — the
+        glob lookup of the short form would refuse to disambiguate."""
+        from hivemind.commands.task import _resolve_in_tasks_dir
+
+        tasks = _tasks_dir(tmp_path)
+        tasks.mkdir(parents=True)
+        (tasks / "MP-013-aaaa.md").write_text("a", encoding="utf-8")
+        (tasks / "MP-013-bbbb.md").write_text("b", encoding="utf-8")
+
+        # Each full ID resolves to its own file with no ambiguity.
+        a = _resolve_in_tasks_dir(tasks, "MP-013-aaaa")
+        b = _resolve_in_tasks_dir(tasks, "MP-013-bbbb")
+        assert a is not None and a.name == "MP-013-aaaa.md"
+        assert b is not None and b.name == "MP-013-bbbb.md"
+
+        # Short form errors because it can't pick a winner.
+        import click as _click
+        import pytest as _pytest
+
+        with _pytest.raises(_click.ClickException) as exc:
+            _resolve_in_tasks_dir(tasks, "MP-013")
+        assert "Ambiguous" in str(exc.value.message)
+
+    def test_legacy_short_form_file_still_resolvable(self, tmp_path: Path) -> None:
+        """Pre-v5.1 files with no hash suffix continue to resolve."""
+        from hivemind.commands.task import _resolve_in_tasks_dir
+
+        tasks = _tasks_dir(tmp_path)
+        tasks.mkdir(parents=True)
+        (tasks / "MP-001.md").write_text("legacy", encoding="utf-8")
+
+        resolved = _resolve_in_tasks_dir(tasks, "MP-001")
+        assert resolved is not None
+        assert resolved.name == "MP-001.md"
 
 
 class TestList:
@@ -357,7 +448,7 @@ class TestGet:
         )
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        assert data["id"] == "MP-001"
+        assert str(data["id"]).startswith("MP-001-")
         assert data["title"] == "JSON task"
         assert "body" in data
 
@@ -379,7 +470,7 @@ class TestUpdate:
         assert result.exit_code == 0, result.output
         assert "Updated" in result.output or "in_progress" in result.output
 
-        task_file = _tasks_dir(tmp_path) / "MP-001.md"
+        task_file = _task_file(tmp_path, "MP-001")
         fm, _body = parse_task(task_file)
         assert fm["status"] == "in_progress"
         assert fm["title"] == "Updated"
@@ -395,7 +486,7 @@ class TestUpdate:
         )
         assert result.exit_code == 0, result.output
 
-        task_file = _tasks_dir(tmp_path) / "MP-001.md"
+        task_file = _task_file(tmp_path, "MP-001")
         fm, _body = parse_task(task_file)
         assert fm["status"] == "done"
         assert "completed_at" in fm
@@ -568,9 +659,11 @@ class TestTaskIndex:
             idx_path.unlink()
 
         index_data = _rebuild_task_index(tasks_dir)
-        assert "MP-001" in index_data["tasks"]
-        assert "MP-002" in index_data["tasks"]
-        assert index_data["tasks"]["MP-001"]["title"] == "First"
+        id1 = _task_id(tmp_path, "MP-001")
+        id2 = _task_id(tmp_path, "MP-002")
+        assert id1 in index_data["tasks"]
+        assert id2 in index_data["tasks"]
+        assert index_data["tasks"][id1]["title"] == "First"
         assert index_data["version"] == 1
 
         # File should exist on disk
@@ -586,9 +679,10 @@ class TestTaskIndex:
         if idx_path.exists():
             idx_path.unlink()
 
+        canonical = _task_id(tmp_path, "MP-001")
         _update_task_index_entry(
             tasks_dir,
-            "MP-001",
+            canonical,
             {
                 "status": "in_progress",
                 "priority": "high",
@@ -600,7 +694,7 @@ class TestTaskIndex:
 
         loaded = _load_task_index(tasks_dir)
         assert loaded is not None
-        assert "MP-001" in loaded["tasks"]
+        assert canonical in loaded["tasks"]
 
     def test_create_writes_index_entry(self, tmp_path: Path) -> None:
         _config_path, data_path = _make_workspace(tmp_path)
@@ -610,12 +704,13 @@ class TestTaskIndex:
         )
         assert result.exit_code == 0, result.output
 
+        canonical = _task_id(tmp_path, "MP-001")
         loaded = _load_task_index(_tasks_dir(tmp_path))
         assert loaded is not None
-        assert "MP-001" in loaded["tasks"]
-        assert loaded["tasks"]["MP-001"]["title"] == "Indexed task"
-        assert loaded["tasks"]["MP-001"]["priority"] == "high"
-        assert loaded["tasks"]["MP-001"]["status"] == "pending"
+        assert canonical in loaded["tasks"]
+        assert loaded["tasks"][canonical]["title"] == "Indexed task"
+        assert loaded["tasks"][canonical]["priority"] == "high"
+        assert loaded["tasks"][canonical]["status"] == "pending"
 
     def test_update_writes_index_entry(self, tmp_path: Path) -> None:
         _config_path, data_path = _make_workspace(tmp_path)
@@ -626,9 +721,10 @@ class TestTaskIndex:
         )
         assert result.exit_code == 0, result.output
 
+        canonical = _task_id(tmp_path, "MP-001")
         loaded = _load_task_index(_tasks_dir(tmp_path))
         assert loaded is not None
-        assert loaded["tasks"]["MP-001"]["status"] == "in_progress"
+        assert loaded["tasks"][canonical]["status"] == "in_progress"
 
     def test_scan_uses_index_when_available(self, tmp_path: Path) -> None:
         _config_path, data_path = _make_workspace(tmp_path)
@@ -661,7 +757,7 @@ class TestTaskIndex:
         assert idx_path.exists()
         loaded = _load_task_index(_tasks_dir(tmp_path))
         assert loaded is not None
-        assert "MP-001" in loaded["tasks"]
+        assert _task_id(tmp_path, "MP-001") in loaded["tasks"]
 
     def test_scan_falls_back_on_corrupt_index(self, tmp_path: Path) -> None:
         _config_path, data_path = _make_workspace(tmp_path)
@@ -697,7 +793,7 @@ class TestTaskIndex:
         assert raw["version"] == 1
         assert isinstance(raw["tasks"], dict)
 
-        entry = raw["tasks"]["MP-001"]
+        entry = raw["tasks"][_task_id(tmp_path, "MP-001")]
         assert entry["status"] == "pending"
         assert entry["priority"] == "high"
         assert entry["type"] == "task"
@@ -714,7 +810,7 @@ class TestTaskBodyAndCriteria:
     def _create_task(self, tmp_path: Path) -> Path:
         _make_workspace(tmp_path)
         _invoke(tmp_path, ["create", "-p", "myproj", "-t", "Body test"])
-        return _tasks_dir(tmp_path) / "MP-001.md"
+        return _task_file(tmp_path, "MP-001")
 
     def test_body_set_replaces_content(self, tmp_path: Path) -> None:
         task_path = self._create_task(tmp_path)
@@ -728,7 +824,7 @@ class TestTaskBodyAndCriteria:
         result = _invoke(tmp_path, ["body-set", "MP-001"], input="X\n")
         assert result.exit_code == 0, result.output
         fm, _body = parse_task(task_path)
-        assert fm["id"] == "MP-001"
+        assert str(fm["id"]).startswith("MP-001-")
         assert fm["title"] == "Body test"
 
     def test_body_append_adds_after_existing(self, tmp_path: Path) -> None:

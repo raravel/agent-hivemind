@@ -1,9 +1,20 @@
-"""Per-project task counter helpers."""
+"""Per-project task counter helpers.
+
+Task IDs are formed as ``<PREFIX>-<NNN>-<hash>`` (e.g. ``DM-013-a7c3``). The
+4-char random hex suffix makes the ID unique even when two collaborators
+allocate ``DM-013`` concurrently on different machines — both files coexist
+under different filenames instead of colliding at merge time. The numeric
+part is still allocated by scanning the tasks directory for the current
+maximum and adding one; the ``_counter.json`` cache is advisory and is
+rebuilt from disk if missing, malformed, or in a merge-conflict state.
+"""
 
 from __future__ import annotations
 
 import json
 import os
+import re
+import secrets
 import sys
 import tempfile
 import time
@@ -17,6 +28,14 @@ _COUNTER_FILENAME = "_counter.json"
 _LOCK_FILENAME = "_counter.lock"
 _WINDOWS_LOCK_TIMEOUT_SECONDS = 5.0
 _WINDOWS_LOCK_RETRY_SECONDS = 0.05
+
+# Filename patterns we recognize when scanning the tasks dir for the
+# current max number. Supports both the legacy ``<PREFIX>-013`` and the
+# v5.1 hash-suffixed ``<PREFIX>-013-<hash>`` forms.
+_HASH_SUFFIX_LEN = 4
+_NUMBER_RE_TEMPLATE = (
+    r"^{prefix}-(\d{{1,9}})(?:-[0-9a-f]{{{hash_len}}})?$"
+)
 
 
 class _CounterLock:
@@ -148,19 +167,50 @@ def _write_counter(counter_path: Path, value: int) -> None:
         raise
 
 
+def _scan_max_number(tasks_dir: Path, prefix: str) -> int:
+    """Return the highest task number on disk for *prefix* (0 if none).
+
+    Recognizes both legacy ``<PREFIX>-NNN.md`` and v5.1
+    ``<PREFIX>-NNN-<hash>.md`` filenames so existing tasks keep advancing
+    the sequence.
+    """
+    if not tasks_dir.is_dir():
+        return 0
+    pattern = re.compile(
+        _NUMBER_RE_TEMPLATE.format(prefix=re.escape(prefix), hash_len=_HASH_SUFFIX_LEN)
+    )
+    highest = 0
+    for entry in tasks_dir.iterdir():
+        if not entry.is_file() or entry.suffix != ".md":
+            continue
+        match = pattern.match(entry.stem)
+        if match is None:
+            continue
+        number = int(match.group(1))
+        if number > highest:
+            highest = number
+    return highest
+
+
 def next_task_id(
     linked_path: Path,
     prefix: str,
     legacy_counter: int = 0,
 ) -> str:
-    """Return the next task ID and persist the incremented counter."""
+    """Allocate the next task ID and persist the advisory counter cache.
+
+    The numeric portion is the max of (disk scan, cached counter,
+    ``legacy_counter``) plus 1. A 4-char random hex suffix is appended so
+    two collaborators allocating the same number on different branches
+    produce different filenames — both survive merge instead of colliding.
+    """
     with _CounterLock(_lock_path(linked_path)):
         counter_path = _counter_path(linked_path)
-        # legacy_counter is consulted only when the per-project counter file
-        # is absent/invalid. Once _counter.json exists, it is the source of
-        # truth; manual edits to global config no longer move the counter.
-        counter = _read_counter(counter_path, legacy_counter)
-        counter += 1
+        tasks_root = task_dir(linked_path)
+        cached = _read_counter(counter_path, legacy_counter)
+        scanned = _scan_max_number(tasks_root, prefix)
+        counter = max(cached, scanned) + 1
         _write_counter(counter_path, counter)
 
-    return f"{prefix}-{counter:03d}"
+    suffix = secrets.token_hex(_HASH_SUFFIX_LEN // 2)
+    return f"{prefix}-{counter:03d}-{suffix}"

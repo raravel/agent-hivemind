@@ -210,25 +210,70 @@ def _iter_project_task_dirs(
     return out
 
 
+def _resolve_in_tasks_dir(tasks_dir: Path, task_id: str) -> Path | None:
+    """Resolve a task ID to a file in *tasks_dir*.
+
+    Accepts the canonical v5.1 form ``<PREFIX>-NNN-<hash>`` (direct match)
+    and the legacy short form ``<PREFIX>-NNN`` (falls back to globbing
+    ``<id>-*.md``). Returns the resolved path or ``None`` when no match.
+
+    Raises a click error when the short form is ambiguous (matches more
+    than one hash-suffixed file in the same project).
+    """
+    direct = tasks_dir / f"{task_id}.md"
+    if direct.exists():
+        return direct
+    matches = sorted(tasks_dir.glob(f"{task_id}-*.md"))
+    if not matches:
+        return None
+    if len(matches) > 1:
+        names = ", ".join(p.stem for p in matches)
+        raise click.ClickException(
+            f"Ambiguous task ID {task_id!r}: matches {names}. Use the full ID."
+        )
+    return matches[0]
+
+
 def _find_task_file(cfg: HivemindConfig, task_id: str) -> Path:
     """Find a task markdown file by its ID across all registered projects."""
     for _name, tasks_dir in _iter_project_task_dirs(cfg):
-        candidate = tasks_dir / f"{task_id}.md"
-        if candidate.exists():
-            return candidate
+        resolved = _resolve_in_tasks_dir(tasks_dir, task_id)
+        if resolved is not None:
+            return resolved
 
     raise click.ClickException(f"Task not found: {task_id}")
 
 
 def _find_task_with_project(
     cfg: HivemindConfig, task_id: str
-) -> tuple[Path, str, Path]:
-    """Return (task_path, project_name, tasks_dir) for a task ID."""
+) -> tuple[Path, str, Path, str]:
+    """Return (task_path, project_name, tasks_dir, canonical_id) for a task ID.
+
+    ``canonical_id`` is the full hash-suffixed ID derived from the file's
+    stem. Callers should use it (not the user-supplied short ``task_id``)
+    when writing to the task index or any other ID-keyed store.
+    """
     for name, tasks_dir in _iter_project_task_dirs(cfg):
-        candidate = tasks_dir / f"{task_id}.md"
-        if candidate.exists():
-            return candidate, name, tasks_dir
+        resolved = _resolve_in_tasks_dir(tasks_dir, task_id)
+        if resolved is not None:
+            return resolved, name, tasks_dir, resolved.stem
     raise click.ClickException(f"Task not found: {task_id}")
+
+
+def _resolve_to_canonical_id(cfg: HivemindConfig, task_id: str) -> str:
+    """Normalize a user-supplied task ID to the canonical full form.
+
+    Used at create time for ``--parent`` and ``--depends`` references so
+    cross-task wiring stores the hash-suffixed ID even when the user
+    typed the legacy short form. Returns the input unchanged when the
+    referenced task doesn't exist (e.g. a forward reference) so existing
+    fixtures and tests that depend on string identity keep working.
+    """
+    for _name, tasks_dir in _iter_project_task_dirs(cfg):
+        resolved = _resolve_in_tasks_dir(tasks_dir, task_id)
+        if resolved is not None:
+            return resolved.stem
+    return task_id
 
 
 def _scan_tasks_from_index(
@@ -368,7 +413,9 @@ def _auto_complete_parents(
         else "done"
     )
 
-    parent_path, _proj, parent_tasks_dir = _find_task_with_project(cfg, parent_id)
+    parent_path, _proj, parent_tasks_dir, parent_canonical_id = _find_task_with_project(
+        cfg, parent_id
+    )
     today = date.today().isoformat()
     now_iso = datetime.now().isoformat()
     update_frontmatter(
@@ -377,7 +424,7 @@ def _auto_complete_parents(
     )
 
     parent_fm_fresh, _ = parse_task(parent_path)
-    _update_task_index_entry(parent_tasks_dir, parent_id, parent_fm_fresh)
+    _update_task_index_entry(parent_tasks_dir, parent_canonical_id, parent_fm_fresh)
 
     parent_type = str(parent_fm.get("type", ""))
     click.echo(f"Auto-completed: {parent_id} [{parent_type}] -> {new_status}")
@@ -582,6 +629,13 @@ def create(
         linked_path = linked_path_for(cfg, project)
     except FileNotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
+
+    # Normalize user-supplied references (--parent / --depends) to their
+    # canonical hash-suffixed form so the stored frontmatter survives
+    # short-form aliasing across machines.
+    if parent_id:
+        parent_id = _resolve_to_canonical_id(cfg, parent_id)
+    depends = tuple(_resolve_to_canonical_id(cfg, d) for d in depends)
 
     # Validate parent hierarchy
     all_tasks = _load_all_tasks(cfg)
@@ -823,7 +877,9 @@ def update(
 ) -> None:
     """Update an existing task."""
     cfg, _data_path = _find_config()
-    task_path, _project_name, tasks_dir = _find_task_with_project(cfg, task_id)
+    task_path, _project_name, tasks_dir, canonical_id = _find_task_with_project(
+        cfg, task_id
+    )
     linked_path = tasks_dir.parent.parent  # <linked>/hivemind/tasks -> <linked>
 
     updates: dict[str, object] = {}
@@ -848,11 +904,11 @@ def update(
     update_frontmatter(task_path, updates)
 
     fm_after, _body_after = parse_task(task_path)
-    _update_task_index_entry(tasks_dir, task_id, fm_after)
+    _update_task_index_entry(tasks_dir, canonical_id, fm_after)
 
-    auto_commit(linked_path, f"task: update {task_id}")
+    auto_commit(linked_path, f"task: update {canonical_id}")
 
-    click.echo(f"Updated task: {task_id}")
+    click.echo(f"Updated task: {canonical_id}")
     for key, value in updates.items():
         click.echo(f"  {key}: {value}")
 
@@ -863,7 +919,7 @@ def update(
 
         # Update the in-memory copy so sibling check uses current state
         for t in all_tasks:
-            if t.get("id") == task_id:
+            if t.get("id") == canonical_id:
                 t["status"] = status
                 break
 
@@ -889,10 +945,15 @@ def _read_stdin_or_file(content_file: str | None) -> str:
 
 
 def _bump_updated(task_path: Path, tasks_dir: Path, task_id: str) -> None:
-    """Touch the ``updated`` frontmatter field and refresh the index entry."""
+    """Touch the ``updated`` frontmatter field and refresh the index entry.
+
+    The ``task_id`` argument is accepted for backward compatibility but the
+    index entry is always keyed by the file's stem (the canonical full ID),
+    so legacy short-form callers don't pollute the index.
+    """
     update_frontmatter(task_path, {"updated": date.today().isoformat()})
     fm_after, _body = parse_task(task_path)
-    _update_task_index_entry(tasks_dir, task_id, fm_after)
+    _update_task_index_entry(tasks_dir, task_path.stem, fm_after)
 
 
 @task.command(name="body-set")
@@ -908,12 +969,12 @@ def _bump_updated(task_path: Path, tasks_dir: Path, task_id: str) -> None:
 def body_set_cmd(task_id: str, content_file: str | None) -> None:
     """Replace the body of a task from stdin (or --content FILE)."""
     cfg, _ = _find_config()
-    task_path, _proj, tasks_dir = _find_task_with_project(cfg, task_id)
+    task_path, _proj, tasks_dir, canonical_id = _find_task_with_project(cfg, task_id)
     body = _read_stdin_or_file(content_file)
     _write_task_body(task_path, body)
-    _bump_updated(task_path, tasks_dir, task_id)
+    _bump_updated(task_path, tasks_dir, canonical_id)
     linked_path = tasks_dir.parent.parent
-    auto_commit(linked_path, f"task: body-set {task_id}")
+    auto_commit(linked_path, f"task: body-set {canonical_id}")
     click.echo(f"Wrote: {task_path}")
 
 
@@ -930,16 +991,16 @@ def body_set_cmd(task_id: str, content_file: str | None) -> None:
 def body_append_cmd(task_id: str, content_file: str | None) -> None:
     """Append to the body of a task from stdin (or --content FILE)."""
     cfg, _ = _find_config()
-    task_path, _proj, tasks_dir = _find_task_with_project(cfg, task_id)
+    task_path, _proj, tasks_dir, canonical_id = _find_task_with_project(cfg, task_id)
     addition = _read_stdin_or_file(content_file)
     _fm, body = parse_task(task_path)
     if body and not body.endswith("\n"):
         body += "\n"
     new_body = body + addition
     _write_task_body(task_path, new_body)
-    _bump_updated(task_path, tasks_dir, task_id)
+    _bump_updated(task_path, tasks_dir, canonical_id)
     linked_path = tasks_dir.parent.parent
-    auto_commit(linked_path, f"task: body-append {task_id}")
+    auto_commit(linked_path, f"task: body-append {canonical_id}")
     click.echo(f"Wrote: {task_path}")
 
 
@@ -996,7 +1057,7 @@ def criteria_add_cmd(task_id: str, text: str) -> None:
     Adds the section if it doesn't already exist.
     """
     cfg, _ = _find_config()
-    task_path, _proj, tasks_dir = _find_task_with_project(cfg, task_id)
+    task_path, _proj, tasks_dir, canonical_id = _find_task_with_project(cfg, task_id)
     _fm, body = parse_task(task_path)
     text = text.strip()
     if not text:
@@ -1014,9 +1075,9 @@ def criteria_add_cmd(task_id: str, text: str) -> None:
         new_body = _render_criteria(head, criteria, tail)
 
     _write_task_body(task_path, new_body)
-    _bump_updated(task_path, tasks_dir, task_id)
+    _bump_updated(task_path, tasks_dir, canonical_id)
     linked_path = tasks_dir.parent.parent
-    auto_commit(linked_path, f"task: criteria-add {task_id}")
+    auto_commit(linked_path, f"task: criteria-add {canonical_id}")
     click.echo(f"Added: {line}")
 
 
@@ -1026,7 +1087,7 @@ def criteria_add_cmd(task_id: str, text: str) -> None:
 def criteria_check_cmd(task_id: str, index: int) -> None:
     """Toggle ``- [ ]`` <-> ``- [x]`` at the 1-based *index*."""
     cfg, _ = _find_config()
-    task_path, _proj, tasks_dir = _find_task_with_project(cfg, task_id)
+    task_path, _proj, tasks_dir, canonical_id = _find_task_with_project(cfg, task_id)
     _fm, body = parse_task(task_path)
     head, criteria, tail = _split_criteria(body)
     if not criteria:
@@ -1048,9 +1109,9 @@ def criteria_check_cmd(task_id: str, index: int) -> None:
 
     new_body = _render_criteria(head, criteria, tail)
     _write_task_body(task_path, new_body)
-    _bump_updated(task_path, tasks_dir, task_id)
+    _bump_updated(task_path, tasks_dir, canonical_id)
     linked_path = tasks_dir.parent.parent
-    auto_commit(linked_path, f"task: criteria-check {task_id}")
+    auto_commit(linked_path, f"task: criteria-check {canonical_id}")
     click.echo(f"Toggled: {criteria[index - 1]}")
 
 
