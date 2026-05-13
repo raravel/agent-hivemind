@@ -92,13 +92,13 @@ class _CounterLock:
 
     @staticmethod
     def _acquire_windows(fd: int) -> None:
-        import msvcrt
+        import msvcrt  # type: ignore[import-not-found,unused-ignore]
 
         deadline = time.monotonic() + _WINDOWS_LOCK_TIMEOUT_SECONDS
         while True:
             try:
                 os.lseek(fd, 0, os.SEEK_SET)
-                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # type: ignore[attr-defined,unused-ignore]
                 return
             except OSError:
                 if time.monotonic() >= deadline:
@@ -107,10 +107,10 @@ class _CounterLock:
 
     @staticmethod
     def _release_windows(fd: int) -> None:
-        import msvcrt
+        import msvcrt  # type: ignore[import-not-found,unused-ignore]
 
         os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined,unused-ignore]
 
 
 def _counter_path(linked_path: Path) -> Path:
@@ -139,7 +139,7 @@ def _read_counter(counter_path: Path, legacy_counter: int = 0) -> int:
         return legacy_counter if _valid_counter(legacy_counter) else 0
 
     value = data.get("value")
-    if _valid_counter(value):
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
         return value
     return legacy_counter if _valid_counter(legacy_counter) else 0
 

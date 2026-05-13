@@ -174,7 +174,7 @@ def _find_project_by_cwd(cfg: HivemindConfig) -> str | None:
             try:
                 linked_path = Path(str(linked)).expanduser().resolve()
                 if linked_path == cwd:
-                    return name
+                    return str(name)
             except Exception:
                 continue
     return None

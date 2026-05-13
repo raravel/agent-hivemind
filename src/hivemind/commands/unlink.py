@@ -52,7 +52,7 @@ def _detect_project_from_cwd(cfg: HivemindConfig) -> str | None:
             continue
         try:
             if Path(linked).expanduser().resolve() == cwd:
-                return name
+                return str(name)
         except Exception:
             continue
     return None
