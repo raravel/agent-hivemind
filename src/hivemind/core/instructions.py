@@ -37,6 +37,25 @@ def replace_managed_block(existing: str, block: str) -> str:
     return managed
 
 
+def strip_managed_block(existing: str) -> str:
+    """Remove the managed hivemind block from a markdown file.
+
+    Returns the unchanged content when no block is present. The surrounding
+    text is preserved verbatim (minus trailing whitespace introduced by the
+    splice).
+    """
+    if BLOCK_START not in existing or BLOCK_END not in existing:
+        return existing
+    start = existing.index(BLOCK_START)
+    end = existing.index(BLOCK_END) + len(BLOCK_END)
+    prefix = existing[:start].rstrip()
+    suffix = existing[end:].lstrip("\n")
+    parts = [part for part in (prefix, suffix) if part]
+    if not parts:
+        return ""
+    return "\n\n".join(parts) + "\n"
+
+
 def build_agents_block(*, project: str, targets: list[str]) -> str:
     """Build the managed AGENTS.md content block.
 
