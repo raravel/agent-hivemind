@@ -759,8 +759,107 @@ class TestMigrateV4ToV5:
         runner = CliRunner()
         result = runner.invoke(
             migrate_cmd,
-            ["--to", "v5", "--path", str(data), "--no-backup"],
+            ["--to", "v5", "--path", str(data), "--no-backup", "--no-commit"],
         )
         assert result.exit_code == 0, result.output
         assert "v4 -> v5" in result.output
         assert (linked / "hivemind" / "docs" / "architecture.md").exists()
+
+
+def _init_git(repo: Path) -> None:
+    """Initialize a git repo with a baseline commit (for migrate auto-commit tests)."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"], cwd=str(repo), check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"], cwd=str(repo), check=True
+    )
+    # Stage everything pre-existing and commit so subsequent changes can be diffed.
+    subprocess.run(["git", "add", "-A"], cwd=str(repo), check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "init"], cwd=str(repo), check=True
+    )
+
+
+def _git_log(repo: Path) -> list[str]:
+    import subprocess
+
+    result = subprocess.run(
+        ["git", "log", "--format=%s"],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+class TestMigrateV5AutoCommit:
+    """Tests for the v5 migration's force-commit behaviour."""
+
+    def test_commits_linked_repo_by_default(self, tmp_path: Path) -> None:
+        from hivemind.commands.migrate import migrate_v4_to_v5
+
+        data, linked = _make_v4_with_project(tmp_path)
+        _init_git(linked)
+
+        summary = migrate_v4_to_v5(data)
+
+        proj = summary["projects"][0]
+        assert proj["committed"] is True
+        log = _git_log(linked)
+        assert any("migrate to v5 layout" in m for m in log)
+
+    def test_skips_commit_when_not_requested(self, tmp_path: Path) -> None:
+        from hivemind.commands.migrate import migrate_v4_to_v5
+
+        data, linked = _make_v4_with_project(tmp_path)
+        _init_git(linked)
+
+        summary = migrate_v4_to_v5(data, commit=False)
+
+        proj = summary["projects"][0]
+        assert "committed" not in proj
+        # No migration commit landed.
+        assert not any("migrate to v5 layout" in m for m in _git_log(linked))
+
+    def test_silent_skip_when_linked_is_not_git(self, tmp_path: Path) -> None:
+        from hivemind.commands.migrate import migrate_v4_to_v5
+
+        data, linked = _make_v4_with_project(tmp_path)
+        # linked is NOT a git repo
+
+        summary = migrate_v4_to_v5(data)
+
+        proj = summary["projects"][0]
+        assert proj["committed"] is False  # nothing committed but no error
+        # Migration still moved files.
+        assert (linked / "hivemind" / "docs" / "architecture.md").exists()
+
+    def test_ignores_global_auto_commit_toggle(self, tmp_path: Path) -> None:
+        """Explicit migrate commit should land even when auto_commit=false."""
+        from hivemind.commands.migrate import migrate_v4_to_v5
+
+        data, linked = _make_v4_with_project(tmp_path)
+        _init_git(linked)
+
+        # Patch the config so auto_commit is explicitly false.
+        config_path = data / ".hivemind.json"
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+        cfg["auto_commit"] = False
+        config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+
+        import os
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(data)  # so find_for_command picks this config
+            summary = migrate_v4_to_v5(data)
+        finally:
+            os.chdir(old_cwd)
+
+        assert summary["projects"][0]["committed"] is True
+        assert any("migrate to v5 layout" in m for m in _git_log(linked))

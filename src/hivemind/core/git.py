@@ -22,7 +22,7 @@ def _run_git(repo_dir: Path, *args: str) -> tuple[int, str]:
         return 1, ""
 
 
-def auto_commit(repo_dir: Path, message: str) -> bool:
+def auto_commit(repo_dir: Path, message: str, *, force: bool = False) -> bool:
     """Stage all changes in *repo_dir* and commit if auto_commit is enabled.
 
     The ``auto_commit`` toggle is resolved from the global hivemind config
@@ -30,13 +30,18 @@ def auto_commit(repo_dir: Path, message: str) -> bool:
     target is independent: project-local artifacts (specs, tasks, scores)
     commit into the linked project repo; cross-project artifacts (L2/index)
     commit into the data repo. Returns True if a commit was made.
+
+    Pass ``force=True`` to bypass the ``auto_commit`` toggle — for one-shot
+    operations the user has explicitly opted into (e.g., ``hv migrate``).
+    Non-git directories are still a silent no-op.
     """
-    try:
-        cfg = HivemindConfig.find_for_command()
-    except FileNotFoundError:
-        return False
-    if not cfg.get("auto_commit"):
-        return False
+    if not force:
+        try:
+            cfg = HivemindConfig.find_for_command()
+        except FileNotFoundError:
+            return False
+        if not cfg.get("auto_commit"):
+            return False
 
     # Check if it's a git repo
     code, _ = _run_git(repo_dir, "rev-parse", "--git-dir")

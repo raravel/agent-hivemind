@@ -723,7 +723,10 @@ def _move_dir_contents(src_dir: Path, dst_dir: Path, repo: Path | None) -> int:
 
 
 def migrate_v4_to_v5(
-    data_path: Path, only_projects: list[str] | None = None
+    data_path: Path,
+    only_projects: list[str] | None = None,
+    *,
+    commit: bool = True,
 ) -> dict[str, Any]:
     """Move project-local artifacts from the data dir to each linked repo.
 
@@ -731,6 +734,11 @@ def migrate_v4_to_v5(
     the schema version is bumped only when no filter is active (running on a
     subset leaves the version alone — the data dir may still hold legacy
     layouts for the rest).
+
+    When *commit* is True (the default), each touched repo gets an auto
+    commit bundling the file moves and the refreshed CLAUDE.md / AGENTS.md
+    blocks — bypassing the global ``auto_commit`` toggle since migrate is
+    an explicit one-shot opt-in. Non-git directories are silently skipped.
 
     For every registered project with a valid ``linked_path``:
       - ``<data>/projects/<name>/*`` -> ``<linked>/hivemind/docs/``
@@ -837,9 +845,20 @@ def migrate_v4_to_v5(
             project_summary["instructions_refreshed"] = []
             project_summary["instructions_error"] = str(exc)
 
+        # 5. Force-commit the linked repo. Bypasses the global auto_commit
+        # toggle: migrate is an explicit opt-in and the user expects the
+        # file moves + instruction refresh to land as one tidy commit.
+        if commit:
+            from hivemind.core.git import auto_commit
+
+            committed = auto_commit(
+                linked, "chore(hivemind): migrate to v5 layout", force=True
+            )
+            project_summary["committed"] = committed
+
         summary["projects"].append(project_summary)
 
-    # 5. Bump schema version only when migrating the full set — a partial
+    # 6. Bump schema version only when migrating the full set — a partial
     # migration leaves other projects on the legacy layout.
     if only is None and cfg_data.get("version") != SCHEMA_V5:
         cfg_data["version"] = SCHEMA_V5
@@ -848,6 +867,15 @@ def migrate_v4_to_v5(
             encoding="utf-8",
         )
         summary["version_updated"] = True
+
+    # 7. Commit the data repo (cleared legacy projects/, tasks/, version
+    # bump). Silently skipped when data_path isn't a git tree.
+    if commit:
+        from hivemind.core.git import auto_commit
+
+        summary["data_committed"] = auto_commit(
+            data_path, "chore(hivemind): v4 -> v5 migration", force=True
+        )
 
     return summary
 
@@ -868,6 +896,10 @@ def print_v5_migration_summary(summary: dict[str, Any]) -> None:
         refreshed = p.get("instructions_refreshed") or []
         if refreshed:
             click.echo(f"      refreshed: {', '.join(refreshed)}")
+        if "committed" in p:
+            click.echo(
+                f"      committed: {'yes' if p['committed'] else 'no (not a git repo or nothing to commit)'}"
+            )
         err = p.get("instructions_error")
         if err:
             click.echo(f"      WARN: instruction refresh failed — {err}")
@@ -875,6 +907,10 @@ def print_v5_migration_summary(summary: dict[str, Any]) -> None:
         click.echo(f"  - SKIP {s['project']}: {s['reason']}")
     if summary.get("version_updated"):
         click.echo(f"  Schema version bumped to {SCHEMA_V5}.")
+    if "data_committed" in summary:
+        click.echo(
+            f"  Data repo committed: {'yes' if summary['data_committed'] else 'no (not a git repo or nothing to commit)'}"
+        )
 
 
 def _detect_current_version(data_path: Path) -> str | None:
@@ -930,11 +966,18 @@ def _detect_current_version(data_path: Path) -> str | None:
     default=False,
     help="Skip the automatic data directory backup.",
 )
+@click.option(
+    "--no-commit",
+    is_flag=True,
+    default=False,
+    help="Skip the auto-commit on touched repos (v5 only; default is to commit).",
+)
 def migrate_cmd(
     target: str | None,
     path: str | None,
     projects: tuple[str, ...],
     no_backup: bool,
+    no_commit: bool,
 ) -> None:
     data_path = (
         Path(path).expanduser().resolve()
@@ -1000,7 +1043,9 @@ def migrate_cmd(
                 Path(p).expanduser().name if "/" in p or "\\" in p else p
                 for p in projects
             ]
-        summary = migrate_v4_to_v5(data_path, only_projects=only)
+        summary = migrate_v4_to_v5(
+            data_path, only_projects=only, commit=not no_commit
+        )
         print_v5_migration_summary(summary)
         return
 
