@@ -70,6 +70,9 @@ def _find_config_path() -> Path | None:
     return None
 
 
+_EXPECTED_SCHEMA_VERSION = "5.0.0"
+
+
 def _check_config() -> tuple[CheckResult, HivemindConfig | None]:
     config_path = _find_config_path()
     if config_path is None:
@@ -86,15 +89,19 @@ def _check_config() -> tuple[CheckResult, HivemindConfig | None]:
         return _err("Config .hivemind.json", f"malformed at {config_path}: {e}"), None
 
     version = cfg.get("version")
-    if version != "3.0.0":
+    if version != _EXPECTED_SCHEMA_VERSION:
         return (
             _warn(
                 "Config .hivemind.json",
-                f"found at {config_path} but version={version!r} (v3 expected — run `hv migrate --to v3`)",
+                f"found at {config_path} but version={version!r} "
+                f"(v{_EXPECTED_SCHEMA_VERSION} expected — run `hv migrate --to v5`)",
             ),
             cfg,
         )
-    return _ok("Config .hivemind.json", f"{config_path} (v3.0.0)"), cfg
+    return (
+        _ok("Config .hivemind.json", f"{config_path} (v{_EXPECTED_SCHEMA_VERSION})"),
+        cfg,
+    )
 
 
 def _check_data_directory(cfg: HivemindConfig | None) -> CheckResult:
@@ -104,14 +111,25 @@ def _check_data_directory(cfg: HivemindConfig | None) -> CheckResult:
     if not data_path.exists():
         return _err("Data directory", f"{data_path} does not exist")
 
-    required = ("projects", "tasks", "level1", "level2", "level3")
+    # v5: only L2/L3 are cross-project state. `projects/` and `tasks/` moved
+    # into each linked repo under `hivemind/`. `level1/` is a regenerable cache
+    # for important.md, so we don't require it.
+    required = ("level2", "level3")
     missing = [d for d in required if not (data_path / d).is_dir()]
     if missing:
         return _warn(
             "Data directory",
             f"{data_path} missing subdirs: {', '.join(missing)} — run `hv init`",
         )
-    return _ok("Data directory", f"{data_path} (all tiers present)")
+
+    legacy = [d for d in ("projects", "tasks") if (data_path / d).is_dir()]
+    if legacy:
+        return _warn(
+            "Data directory",
+            f"{data_path} still has legacy subdirs: {', '.join(legacy)} "
+            "— run `hv migrate --to v5`",
+        )
+    return _ok("Data directory", f"{data_path} (L2/L3 present)")
 
 
 def _check_claude_plugin_installed() -> CheckResult:
@@ -139,7 +157,7 @@ def _check_claude_plugin_installed() -> CheckResult:
     if js_leftover:
         return _warn(
             "Claude Code plugin",
-            f"{detail} but legacy JS hooks present: {', '.join(js_leftover)} — run `hv migrate --to v3`",
+            f"{detail} but legacy JS hooks present: {', '.join(js_leftover)} — run `hv init`",
         )
     if not skills:
         return _warn("Claude Code plugin", f"{detail} — no skills found")
@@ -212,7 +230,7 @@ def _check_project_link(project_dir: Path) -> tuple[CheckResult, dict[str, Any] 
         return (
             _err(
                 "Project link",
-                f"data_path {raw_path!r} is a Windows path on {sys.platform} — run `hv migrate --to v3`",
+                f"data_path {raw_path!r} is a Windows path on {sys.platform} — run `hv migrate --to v5`",
             ),
             link,
         )
@@ -228,6 +246,15 @@ def _check_project_link(project_dir: Path) -> tuple[CheckResult, dict[str, Any] 
         )
 
     project = link.get("project") or "?"
+    # Flag legacy link-file location so users know to migrate.
+    if link_file.name == ".hivemind-link.json":
+        return (
+            _warn(
+                "Project link",
+                f"{project} -> {resolved} (legacy {link_file.name}; run `hv migrate --to v5`)",
+            ),
+            link,
+        )
     return _ok("Project link", f"{project} -> {resolved}"), link
 
 
@@ -293,7 +320,7 @@ def _check_verify_md(
     if legacy.exists():
         return _warn(
             "Project verify.md",
-            f"only legacy build-verify.md at {legacy} — run `hv migrate --to v3`",
+            f"only legacy build-verify.md at {legacy} — run `hv migrate --to v5`",
         )
     return _err(
         "Project verify.md",
@@ -387,7 +414,7 @@ def _check_legacy_artifacts(project_dir: Path) -> CheckResult:
             pass
 
     if issues:
-        return _warn("Legacy artifacts", "; ".join(issues) + " — run `hv migrate --to v3`")
+        return _warn("Legacy artifacts", "; ".join(issues) + " — run `hv migrate --to v5`")
     return _ok("Legacy artifacts", "none found")
 
 

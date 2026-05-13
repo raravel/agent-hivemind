@@ -14,6 +14,7 @@ from hivemind.commands.important import important as _important_group
 from hivemind.commands.init import init_cmd as _init_cmd
 from hivemind.commands.link import link_cmd as _link_cmd
 from hivemind.commands.migrate import migrate_cmd as _migrate_cmd
+from hivemind.commands.projects import projects_cmd as _projects_cmd
 from hivemind.commands.unlink import unlink_cmd as _unlink_cmd
 from hivemind.commands.run import run as _run_cmd
 from hivemind.commands.search import index as _index_group
@@ -33,6 +34,7 @@ def cli() -> None:
 cli.add_command(_init_cmd)
 cli.add_command(_link_cmd)
 cli.add_command(_unlink_cmd)
+cli.add_command(_projects_cmd)
 cli.add_command(_migrate_cmd)
 cli.add_command(_doctor_cmd)
 cli.add_command(_harness_score_cmd)
