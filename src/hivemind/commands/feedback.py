@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,8 +14,9 @@ import click
 import frontmatter
 
 from hivemind.core.config import HivemindConfig
-from hivemind.core.git import auto_commit
+from hivemind.core.git import commit_paths
 from hivemind.core.indexer import build_index, save_index
+from hivemind.core.paths import lesson_log_path, rollback_log_path
 from hivemind.core.similarity import find_similar
 
 _CATEGORY_KEYWORDS: dict[str, list[str]] = {
@@ -534,8 +536,67 @@ def feedback() -> None:
     help="File with lesson text (reads from stdin if omitted).",
 )
 @click.option("--title", "-t", default=None, help="Title for the lesson.")
-def save(project: str, content_file: str | None, title: str | None) -> None:
-    """Save a learning/lesson to L2 documents with BM25 similarity check."""
+@click.option(
+    "--task",
+    "task_id",
+    default=None,
+    help="Source task ID. Recorded in lesson-log.jsonl for rollback tracking.",
+)
+@click.option(
+    "--target",
+    default=None,
+    type=click.Choice(list(VALID_TARGETS), case_sensitive=False),
+    help=(
+        "Where the lesson lands. L2=generic cross-project (default); "
+        "rules/tech-stack/architecture/features=project harness docs."
+    ),
+)
+@click.option(
+    "--feature",
+    default=None,
+    help="Feature slug (required when --target=features).",
+)
+@click.option(
+    "--section",
+    default=None,
+    help=(
+        "Override the harness-doc section heading. Pass with or without '## ' "
+        "prefix. Binding sync uses --target tech-stack --section 'Active Dependencies'."
+    ),
+)
+@click.option(
+    "--skip-gate",
+    is_flag=True,
+    default=False,
+    help=(
+        "Bypass the lesson quality gate. Binding combinations bypass "
+        "automatically; this flag is for explicit caller overrides."
+    ),
+)
+@click.option(
+    "--no-commit",
+    is_flag=True,
+    default=False,
+    help="Append docs but skip git-commit. Caller commits separately.",
+)
+def save(
+    project: str,
+    content_file: str | None,
+    title: str | None,
+    task_id: str | None,
+    target: str | None,
+    feature: str | None,
+    section: str | None,
+    skip_gate: bool,
+    no_commit: bool,
+) -> None:
+    """Save a learning directly to L2 or a harness doc.
+
+    Single entry point for all feedback: no draft queue, no human prompt.
+    Each successful write is committed as an isolated commit (subject
+    contains a ``[lesson:<task>]`` tag) and tracked in ``lesson-log.jsonl``
+    so it can be reverted via ``hv feedback rollback``.
+    """
     # 1. Read lesson text
     if content_file is not None:
         text = Path(content_file).read_text(encoding="utf-8")
@@ -549,44 +610,128 @@ def save(project: str, content_file: str | None, title: str | None) -> None:
         click.echo("Error: Empty lesson text.", err=True)
         raise SystemExit(1)
 
-    # Use first line as title if not provided
+    # 2. Title fallback
     if title is None:
         first_line = text.split("\n")[0].strip()
-        # Strip markdown heading prefix
         title = re.sub(r"^#+\s*", "", first_line)[:100]
 
-    # 2. Resolve data path
-    data_path = _resolve_data_path(project)
+    # 3. Resolve target + section + binding flag
+    resolved_target = _normalize_target(target)
+    resolved_section = _normalize_section_heading(section)
+    is_binding = _is_binding(resolved_target, resolved_section)
 
-    # 3. Run BM25 similarity check
-    similar = find_similar(text, data_path, threshold=0.7)
+    # 4. Cross-check option combinations
+    if resolved_target == "features" and not feature:
+        click.echo("Error: --feature is required when --target=features", err=True)
+        raise SystemExit(2)
+    if feature and resolved_target != "features":
+        click.echo("Error: --feature is only valid with --target=features", err=True)
+        raise SystemExit(2)
+
+    # 5. Quality gate (binding combos and explicit overrides bypass)
+    data_path = _resolve_data_path(project)
+    if not is_binding and not skip_gate:
+        accepted, reason = quality_gate(title, text, data_path)
+        if not accepted:
+            click.echo(f"Rejected: {reason}", err=True)
+            raise SystemExit(1)
+
+    # 6. Resolve linked path. Harness targets require it; L2-only is OK.
+    linked_path = _resolve_linked_path(project)
+    if resolved_target != "L2" and linked_path is None:
+        click.echo(
+            f"Error: project '{project}' is not linked; harness targets require linking.",
+            err=True,
+        )
+        raise SystemExit(2)
 
     today = date.today().isoformat()
+    source_task = task_id or "manual"
 
-    if similar:
-        # 4a. Update existing doc
-        best_path, best_score = similar[0]
-        click.echo(
-            f"Similar lesson found: {best_path} (score: {best_score:.2f})"
+    # 7. Apply the write (reuses the same helper that promote-drafts used).
+    cat = detect_category(title + "\n" + text)
+    draft_entry: dict[str, Any] = {
+        "title": title,
+        "category": cat,
+        "content": text,
+        "target": resolved_target,
+    }
+    if feature:
+        draft_entry["feature"] = feature
+    if resolved_section:
+        draft_entry["section"] = resolved_section
+    if is_binding:
+        draft_entry["kind"] = "BOUND"
+
+    try:
+        action, doc_path = _promote_to_target(
+            data_path,
+            linked_path,
+            project,
+            draft_entry,
+            resolved_target,
+            source_task,
+            today,
         )
-        source_info = f"{project}:{today}"
-        doc_path = _update_existing_doc(data_path, best_path, source_info)
-        click.echo(f"Updated existing lesson: {doc_path}")
-    else:
-        # 4b. Create new doc
-        category = detect_category(text)
-        doc_path = _create_new_doc(data_path, title, text, category, today)
+    except ValueError as exc:
+        click.echo(f"Save failed: {exc}", err=True)
+        raise SystemExit(1) from exc
+
+    # 8. Commit. Use commit_paths so the lesson commit is isolated (no
+    #    incidental working-tree changes get pulled in) — this is what
+    #    makes time-delayed rollback work.
+    commit_hash: str | None = None
+    commit_repo: str | None = None
+    if not no_commit:
+        commit_msg = f"feedback: {title} [lesson:{source_task}]"
+        if resolved_target == "L2":
+            index_data = build_index(data_path)
+            index_path = data_path / "index.json"
+            save_index(index_data, index_path)
+            click.echo("Index updated.")
+            commit_hash = commit_paths(
+                data_path, commit_msg, [doc_path, index_path], force=True
+            )
+            commit_repo = "data"
+        else:
+            assert linked_path is not None  # gated at step 6
+            commit_hash = commit_paths(
+                linked_path, commit_msg, [doc_path], force=True
+            )
+            commit_repo = "linked"
+
+    # 9. lesson-log entry (in linked repo's reflect/). L2 without a linked
+    #    project skips the log: there is no project to roll the lesson back
+    #    against.
+    if linked_path is not None:
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "task_id": source_task,
+            "title": title,
+            "target": resolved_target,
+            "file_path": str(doc_path),
+            "commit_hash": commit_hash,
+            "commit_repo": commit_repo,
+            "is_binding": is_binding,
+            "kind": "BOUND" if is_binding else "LEARNED",
+        }
+        log_path = lesson_log_path(linked_path)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    # 10. Report
+    if action == "L2-new":
         click.echo(f"Created new lesson: {doc_path}")
-        click.echo(f"Category: {category}")
-
-    # 5. Update index
-    index_data = build_index(data_path)
-    index_path = data_path / "index.json"
-    save_index(index_data, index_path)
-    click.echo("Index updated.")
-
-    # 6. Auto-commit
-    auto_commit(data_path, f"feedback: {title}")
+        click.echo(f"Category: {cat}")
+    elif action == "L2-update":
+        click.echo(f"Updated existing lesson: {doc_path}")
+    elif action == "harness-append":
+        click.echo(f"Appended to harness doc: {doc_path}")
+    elif action == "harness-duplicate":
+        click.echo(f"No change (duplicate content): {doc_path}")
+    if commit_hash:
+        click.echo(f"Commit: {commit_hash} ({commit_repo} repo)")
 
 
 # ---------------------------------------------------------------------------
@@ -655,124 +800,43 @@ def draft_add(
     section: str | None,
     auto_promote: bool,
 ) -> None:
-    """Append a candidate lesson to the task's draft file (quality-gated).
+    """[deprecated] Redirects to ``hv feedback save``.
 
-    Exit code 0 on accept, 1 if the quality gate rejects the candidate.
-
-    Binding mode: pass --target features (with --feature) or --target tech-stack
-    --section 'Active Dependencies' to record a binding (file path / pinned
-    version) instead of a lesson. With --auto-promote, the entry is written to
-    the harness doc immediately and the quality gate is skipped.
+    Drafts have been removed: every call writes its target immediately.
+    The ``--auto-promote`` and ``--category`` flags are now no-ops (save
+    auto-detects binding combinations and re-derives the category).
     """
-    if content_file is not None:
-        content = Path(content_file).read_text(encoding="utf-8").strip()
-    else:
-        content = sys.stdin.read().strip()
-
-    if not content:
-        click.echo("Error: empty content", err=True)
-        raise SystemExit(1)
-
-    data_path = _resolve_data_path(project)
-    resolved_target = _normalize_target(target)
-    resolved_section = _normalize_section_heading(section)
-    is_binding = _is_binding(resolved_target, resolved_section)
-
-    # Cross-check argument combinations BEFORE invoking the quality gate
-    # so we surface usage errors first.
-    if resolved_target == "features" and not feature:
-        click.echo("Error: --feature is required when --target=features", err=True)
-        raise SystemExit(2)
-    if feature and resolved_target != "features":
-        click.echo("Error: --feature is only valid with --target=features", err=True)
-        raise SystemExit(2)
-    if auto_promote and not is_binding:
-        click.echo(
-            "Error: --auto-promote is only allowed for binding combinations "
-            "(--target=features, or --target=tech-stack --section='Active Dependencies').",
-            err=True,
-        )
-        raise SystemExit(2)
-
-    # Binding entries skip the lesson quality gate — they're mechanical
-    # records (file paths, pinned versions), not reusable lessons.
-    if not is_binding:
-        accepted, reason = quality_gate(title, content, data_path)
-        if not accepted:
-            click.echo(f"Rejected: {reason}", err=True)
-            raise SystemExit(1)
-
-    cat = category or detect_category(title + "\n" + content)
-    draft_entry: dict[str, Any] = {
-        "title": title,
-        "category": cat,
-        "content": content,
-        "target": resolved_target,
-        "status": "pending",
-    }
-    if feature:
-        draft_entry["feature"] = feature
-    if resolved_section:
-        draft_entry["section"] = resolved_section
-    if is_binding:
-        draft_entry["kind"] = "BOUND"
-
-    # Drafts live alongside tasks under the project repo (v5).
-    draft_linked = _resolve_linked_path(project)
-    if draft_linked is None:
-        raise click.ClickException(
-            f"Project '{project}' is not linked. Run `hv link` first."
-        )
-    draft_path = _draft_path(draft_linked, task_id)
-    data = _load_draft_file(draft_path)
-    data["task_id"] = task_id
-    data.setdefault("created", date.today().isoformat())
-    data["drafts"].append(draft_entry)
-    _save_draft_file(draft_path, data)
-
-    if not auto_promote:
-        click.echo(
-            f"Draft saved: {draft_path} (target={resolved_target}, category={cat})"
-        )
-        return
-
-    # Auto-promote path: immediately write to the harness doc and mark
-    # the draft as promoted. Used by `/hv:task` step 11.5 (Harness sync).
-    today = date.today().isoformat()
-    linked_path = _resolve_linked_path(project)
-    try:
-        action, doc_path = _promote_to_target(
-            data_path, linked_path, project, draft_entry, resolved_target, task_id, today
-        )
-    except ValueError as exc:
-        click.echo(f"Auto-promote failed: {exc}", err=True)
-        raise SystemExit(1)
-    draft_entry["status"] = "promoted"
-    draft_entry["promoted_target"] = resolved_target
-    _save_draft_file(draft_path, data)
-    click.echo(f"Bound + promoted: {action} -> {doc_path}")
+    click.echo(
+        "[deprecated] 'hv feedback draft-add' has been replaced by 'hv feedback save'.",
+        err=True,
+    )
+    del auto_promote, category  # accepted for compat; save handles both natively
+    ctx = click.get_current_context()
+    ctx.invoke(
+        save,
+        project=project,
+        content_file=content_file,
+        title=title,
+        task_id=task_id,
+        target=target,
+        feature=feature,
+        section=section,
+        skip_gate=False,
+        no_commit=False,
+    )
 
 
 @feedback.command(name="drafts")
 @click.option("--project", "-p", required=True, help="Project name.")
 @click.option("--task", "task_id", default=None, help="Filter by task ID.")
 def drafts_list(project: str, task_id: str | None) -> None:
-    """List pending draft lessons for a project."""
-    linked_path = _resolve_linked_path(project)
-    if linked_path is None:
-        raise click.ClickException(
-            f"Project '{project}' is not linked. Run `hv link` first."
-        )
-    pending = _pending_drafts(linked_path, task_id)
-    if not pending:
-        click.echo("No pending drafts.")
-        return
-    for path, data, idx in pending:
-        d = data["drafts"][idx]
-        click.echo(f"--- {path.name} #{idx} ({d['category']}) ---")
-        click.echo(f"Title: {d['title']}")
-        click.echo(d["content"])
-        click.echo("")
+    """[deprecated] Drafts have been removed; nothing to list."""
+    del project, task_id
+    click.echo(
+        "[deprecated] 'hv feedback drafts' is deprecated; drafts are no longer used.",
+        err=True,
+    )
+    click.echo("No pending drafts.")
 
 
 _TARGET_PROMPT_MAP: dict[str, str] = {
@@ -844,109 +908,230 @@ def _promote_to_target(
     help="Promote all pending drafts without prompting (use suggested target).",
 )
 def promote_drafts(project: str, task_id: str | None, auto: bool) -> None:
-    """Interactively review and promote draft lessons.
+    """[deprecated] Draft queue removed; ``hv feedback save`` writes immediately."""
+    del project, task_id, auto
+    click.echo(
+        "[deprecated] 'hv feedback promote-drafts' is deprecated; drafts are no longer used.",
+        err=True,
+    )
+    click.echo("Done. L2=0 harness=0 rejected=0 skipped=0")
 
-    For each pending draft the user sees the suggested target and chooses:
-      1=L2 (generic), 2=rules.md, 3=tech-stack.md, 4=architecture.md,
-      n=reject, s=skip.
-    L2 promotes flow through the standard `hv feedback save` path
-    (BM25 dedup + index rebuild + auto-commit). Harness-doc promotes
-    append a dated bullet under the target file's Learned section.
+
+# ---------------------------------------------------------------------------
+# Rollback + applied — feed the time-delayed gate in hv-task step 15.5
+# ---------------------------------------------------------------------------
+
+
+def _iter_lesson_log(linked_path: Path) -> list[dict[str, Any]]:
+    """Read lesson-log.jsonl entries in chronological order."""
+    path = lesson_log_path(linked_path)
+    if not path.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            out.append(json.loads(raw))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def _resolve_repo_for_entry(
+    data_path: Path, linked_path: Path | None, entry: dict[str, Any]
+) -> Path | None:
+    """Return the git repo that hosts the lesson commit named in ``entry``."""
+    repo = entry.get("commit_repo")
+    if repo == "data":
+        return data_path
+    if repo == "linked":
+        return linked_path
+    return None
+
+
+@feedback.command(name="rollback")
+@click.option("--project", "-p", required=True, help="Project name.")
+@click.option(
+    "--task",
+    "task_id",
+    default=None,
+    help="Roll back the most recent lesson tagged with this task ID.",
+)
+@click.option(
+    "--commit",
+    "commit_hash",
+    default=None,
+    help="Roll back a specific commit hash from lesson-log.jsonl.",
+)
+@click.option(
+    "--reason",
+    default=None,
+    help="Why the rollback was triggered (recorded in rollback-log.jsonl).",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Report the matching entry without reverting.",
+)
+def rollback(
+    project: str,
+    task_id: str | None,
+    commit_hash: str | None,
+    reason: str | None,
+    dry_run: bool,
+) -> None:
+    """Revert a previously auto-saved lesson commit.
+
+    Called by hv-task step 15.5 (time-delayed gate) and by users investigating
+    a bad lesson. Matches by --commit (preferred) or --task; for --task the
+    most recent matching entry wins.
     """
-    data_path = _resolve_data_path(project)
+    if not task_id and not commit_hash:
+        click.echo("Error: pass --task or --commit", err=True)
+        raise SystemExit(2)
+
     linked_path = _resolve_linked_path(project)
     if linked_path is None:
         raise click.ClickException(
             f"Project '{project}' is not linked. Run `hv link` first."
         )
-    pending = _pending_drafts(linked_path, task_id)
-    if not pending:
-        click.echo("No pending drafts.")
+
+    entries = _iter_lesson_log(linked_path)
+    if not entries:
+        click.echo("No lesson-log entries found.", err=True)
+        raise SystemExit(1)
+
+    if commit_hash:
+        candidates = [e for e in entries if e.get("commit_hash") == commit_hash]
+    else:
+        candidates = [e for e in entries if e.get("task_id") == task_id]
+
+    if not candidates:
+        click.echo("No matching lesson-log entry.", err=True)
+        raise SystemExit(1)
+
+    target_entry = candidates[-1]
+    target_commit = target_entry.get("commit_hash")
+    if not target_commit:
+        click.echo("Matching entry has no commit_hash (was --no-commit).", err=True)
+        raise SystemExit(1)
+
+    data_path = _resolve_data_path(project)
+    repo_dir = _resolve_repo_for_entry(data_path, linked_path, target_entry)
+    if repo_dir is None:
+        click.echo(
+            "Cannot resolve repo for entry (missing commit_repo).", err=True
+        )
+        raise SystemExit(1)
+
+    click.echo(
+        f"Match: {target_commit} (task={target_entry.get('task_id')}, "
+        f"target={target_entry.get('target')}, repo={target_entry.get('commit_repo')})"
+    )
+
+    if dry_run:
+        click.echo("(dry-run; no revert performed)")
         return
 
-    today = date.today().isoformat()
-    promoted_l2 = 0
-    promoted_harness = 0
-    rejected = 0
-    skipped = 0
-
-    for path, data, idx in pending:
-        d = data["drafts"][idx]
-        suggested = _normalize_target(d.get("target"))
-        # Map to the numeric prompt choice so pressing Enter accepts the suggestion
-        default_choice = next(
-            (k for k, v in _TARGET_PROMPT_MAP.items() if v == suggested), "1"
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_dir), "revert", "--no-edit", target_commit],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        click.echo(f"git revert failed: {exc}", err=True)
+        raise SystemExit(1) from exc
 
-        click.echo("")
-        click.echo(f"=== {path.name} #{idx} ({d['category']}) ===")
-        click.echo(f"Title:    {d['title']}")
-        click.echo(f"Content:  {d['content']}")
-        click.echo(f"Suggested target: {suggested}")
+    if result.returncode != 0:
+        click.echo(f"git revert failed: {result.stderr.strip()}", err=True)
+        raise SystemExit(1)
 
-        if auto:
-            choice_target = suggested
-        else:
-            ans = click.prompt(
-                "Promote [1=L2, 2=rules, 3=tech-stack, 4=architecture, 5=features, n=reject, s=skip]",
-                default=default_choice,
-                show_default=True,
-            ).strip().lower()
-            if ans == "s":
-                skipped += 1
-                click.echo("  ... skipped")
-                continue
-            if ans == "n":
-                d["status"] = "rejected"
-                _save_draft_file(path, data)
-                rejected += 1
-                click.echo("  rejected")
-                continue
-            if ans not in _TARGET_PROMPT_MAP:
-                click.echo("  invalid choice; skipping")
-                skipped += 1
-                continue
-            choice_target = _TARGET_PROMPT_MAP[ans]
-
-        action, doc_path = _promote_to_target(
-            data_path,
-            linked_path,
-            project,
-            d,
-            choice_target,
-            str(data.get("task_id") or "?"),
-            today,
-        )
-
-        if action == "L2-update":
-            click.echo(f"  L2: updated {doc_path}")
-            promoted_l2 += 1
-        elif action == "L2-new":
-            click.echo(f"  L2: created {doc_path}")
-            promoted_l2 += 1
-        elif action == "harness-append":
-            click.echo(f"  harness: appended to {doc_path}")
-            promoted_harness += 1
-        elif action == "harness-duplicate":
-            click.echo(f"  harness: duplicate of existing content in {doc_path} — no change")
-            # Still mark promoted so we don't revisit the same draft
-            promoted_harness += 1
-
-        d["status"] = "promoted"
-        d["promoted_target"] = choice_target
-        _save_draft_file(path, data)
-
-    # Rebuild index + commit once at the end
-    if promoted_l2:
-        index_data = build_index(data_path)
-        save_index(index_data, data_path / "index.json")
-    if promoted_l2 or promoted_harness:
-        auto_commit(
-            data_path,
-            f"feedback: promoted {promoted_l2 + promoted_harness} draft(s)",
-        )
-
-    click.echo("")
-    click.echo(
-        f"Done. L2={promoted_l2} harness={promoted_harness} rejected={rejected} skipped={skipped}"
+    rev_result = subprocess.run(
+        ["git", "-C", str(repo_dir), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
+    revert_commit = (
+        rev_result.stdout.strip() if rev_result.returncode == 0 else "unknown"
+    )
+
+    rb_path = rollback_log_path(linked_path)
+    rb_path.parent.mkdir(parents=True, exist_ok=True)
+    rb_entry = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "rolled_back_commit": target_commit,
+        "revert_commit": revert_commit,
+        "task_id": target_entry.get("task_id"),
+        "target": target_entry.get("target"),
+        "commit_repo": target_entry.get("commit_repo"),
+        "reason": reason,
+    }
+    with rb_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rb_entry, ensure_ascii=False) + "\n")
+
+    click.echo(f"Reverted {target_commit} -> {revert_commit}")
+
+
+@feedback.command(name="applied")
+@click.option("--project", "-p", required=True, help="Project name.")
+@click.option(
+    "--since-task",
+    default=None,
+    help="Return entries newer than the most recent lesson tagged with this task ID.",
+)
+@click.option(
+    "--limit",
+    default=10,
+    type=int,
+    help="Maximum entries to return when --since-task is not given.",
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["text", "json"], case_sensitive=False),
+    default="text",
+)
+def applied(
+    project: str,
+    since_task: str | None,
+    limit: int,
+    fmt: str,
+) -> None:
+    """List recent lesson-log entries (auto-applied feedback)."""
+    linked_path = _resolve_linked_path(project)
+    if linked_path is None:
+        raise click.ClickException(
+            f"Project '{project}' is not linked. Run `hv link` first."
+        )
+
+    entries = _iter_lesson_log(linked_path)
+    if since_task:
+        cutoff_idx = -1
+        for i, e in enumerate(entries):
+            if e.get("task_id") == since_task:
+                cutoff_idx = i
+        if cutoff_idx >= 0:
+            entries = entries[cutoff_idx + 1 :]
+        # Unknown since_task: fall through with all entries.
+    else:
+        entries = entries[-max(1, limit) :]
+
+    if fmt.lower() == "json":
+        click.echo(json.dumps(entries, ensure_ascii=False, indent=2))
+        return
+
+    if not entries:
+        click.echo("No applied lessons.")
+        return
+    for e in entries:
+        commit = (e.get("commit_hash") or "-")[:12]
+        click.echo(
+            f"{e.get('ts')}  task={e.get('task_id'):<16}  "
+            f"target={e.get('target'):<14}  commit={commit}"
+        )

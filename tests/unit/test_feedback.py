@@ -519,7 +519,11 @@ def _v5_reports_dir(tmp_path: Path) -> Path:
 
 
 class TestDraftAddCLI:
-    def test_accept_and_persist(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deprecated stub: ``hv feedback draft-add`` redirects to ``save``."""
+
+    def test_redirect_writes_via_save(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.chdir(tmp_path)
         _setup_config(tmp_path)
 
@@ -536,24 +540,21 @@ class TestDraftAddCLI:
             _feedback_group,
             [
                 "draft-add",
-                "-p",
-                "demo",
-                "--task",
-                "DM-001",
-                "--title",
-                "FastAPI CORS preflight handler",
-                "-c",
-                str(content_file),
+                "-p", "demo",
+                "--task", "DM-001",
+                "--title", "FastAPI CORS preflight handler",
+                "-c", str(content_file),
             ],
         )
         assert result.exit_code == 0, result.output
-        draft_file = _v5_reports_dir(tmp_path) / "DM-001-lessons-draft.json"
-        assert draft_file.exists()
-        data = json.loads(draft_file.read_text(encoding="utf-8"))
-        assert len(data["drafts"]) == 1
-        assert data["drafts"][0]["status"] == "pending"
+        assert "[deprecated]" in result.output
+        # save creates the L2 doc directly (no draft file).
+        l2_files = list((tmp_path / "data" / "level2").rglob("*.md"))
+        assert l2_files, "save did not create an L2 document"
 
-    def test_reject_vague_content(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_redirect_propagates_quality_gate_rejection(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.chdir(tmp_path)
         _setup_config(tmp_path)
         content_file = tmp_path / "content.txt"
@@ -564,84 +565,32 @@ class TestDraftAddCLI:
             _feedback_group,
             [
                 "draft-add",
-                "-p",
-                "demo",
-                "--task",
-                "DM-001",
-                "--title",
-                "T",
-                "-c",
-                str(content_file),
+                "-p", "demo",
+                "--task", "DM-001",
+                "--title", "T",
+                "-c", str(content_file),
             ],
         )
         assert result.exit_code == 1
-        assert "too vague" in (result.output + (result.stderr or ""))
+        assert "too vague" in result.output
 
 
 class TestPromoteDraftsCLI:
-    def _add_draft(self, tmp_path: Path, data_path: Path, title: str, content: str) -> None:
-        content_file = tmp_path / f"{title}.txt"
-        content_file.write_text(content, encoding="utf-8")
-        runner = CliRunner()
-        runner.invoke(
-            _feedback_group,
-            [
-                "draft-add",
-                "-p",
-                "demo",
-                "--task",
-                "DM-001",
-                "--title",
-                title,
-                "-c",
-                str(content_file),
-            ],
-        )
+    """Deprecated stub: drafts no longer exist; the command is a no-op."""
 
-    def test_auto_promote_creates_l2(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.chdir(tmp_path)
-        data_path = _setup_config(tmp_path)
-        self._add_draft(
-            tmp_path,
-            data_path,
-            "FastAPI CORS preflight handler",
-            "When FastAPI returns 405 on OPTIONS requests, always add CORSMiddleware "
-            "with allow_methods=['*'] before custom middleware. Preflight checks "
-            "bypass the main routes and rely on the middleware chain.",
-        )
-
-        runner = CliRunner()
-        result = runner.invoke(
-            _feedback_group, ["promote-drafts", "-p", "demo", "--auto"]
-        )
-        assert result.exit_code == 0, result.output
-        assert "L2=1" in result.output
-
-        # L2 doc exists
-        level2 = data_path / "level2"
-        found = list(level2.rglob("*.md"))
-        assert found, "no L2 doc created"
-
-        # Draft marked promoted
-        draft_file = (
-            _v5_reports_dir(tmp_path) / "DM-001-lessons-draft.json"
-        )
-        data = json.loads(draft_file.read_text(encoding="utf-8"))
-        assert data["drafts"][0]["status"] == "promoted"
-
-    def test_no_drafts_is_noop(
+    def test_deprecated_banner_and_noop(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
         _setup_config(tmp_path)
+
         runner = CliRunner()
         result = runner.invoke(
             _feedback_group, ["promote-drafts", "-p", "demo", "--auto"]
         )
         assert result.exit_code == 0
-        assert "No pending drafts" in result.output
+        assert "[deprecated]" in result.output
+        assert "Done. L2=0 harness=0" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -772,150 +721,74 @@ class TestAppendToHarnessDoc:
 
 
 
-class TestDraftAddWithTarget:
-    def test_target_persisted(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.chdir(tmp_path)
-        _setup_config(tmp_path)
-        content_file = tmp_path / "c.txt"
-        content_file.write_text(
-            "NEVER import from src/legacy/ in FastAPI routers — scheduled for removal.",
-            encoding="utf-8",
-        )
-        runner = CliRunner()
-        result = runner.invoke(
-            _feedback_group,
-            [
-                "draft-add",
-                "-p",
-                "demo",
-                "--task",
-                "DM-001",
-                "--title",
-                "NEVER import from legacy in routers",
-                "-c",
-                str(content_file),
-                "--target",
-                "rules",
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        draft_file = (
-            _v5_reports_dir(tmp_path) / "DM-001-lessons-draft.json"
-        )
-        data = json.loads(draft_file.read_text(encoding="utf-8"))
-        assert data["drafts"][0]["target"] == "rules"
-
-    def test_legacy_draft_without_target_defaults_L2(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.chdir(tmp_path)
-        _setup_config(tmp_path)
-        # Manually write a v1 draft (no target field)
-        draft_dir = _v5_reports_dir(tmp_path)
-        draft_dir.mkdir(parents=True, exist_ok=True)
-        legacy = {
-            "task_id": "DM-001",
-            "created": "2026-04-20",
-            "drafts": [
-                {
-                    "title": "Legacy entry",
-                    "category": "backend",
-                    "content": "Something useful about FastAPI",
-                    "status": "pending",
-                }
-            ],
-        }
-        (draft_dir / "DM-001-lessons-draft.json").write_text(
-            json.dumps(legacy), encoding="utf-8"
-        )
-
-        # promote-drafts --auto should treat the missing target as L2 and run
-        # through the L2 path
-        runner = CliRunner()
-        result = runner.invoke(
-            _feedback_group, ["promote-drafts", "-p", "demo", "--auto"]
-        )
-        assert result.exit_code == 0, result.output
-        assert "L2=1" in result.output
+# TestDraftAddWithTarget removed in v5: the draft queue is gone, so the
+# target field is no longer persisted into a draft file. The equivalent
+# behaviour — routing a save call to rules/architecture/tech-stack — is
+# covered by TestSaveTargetRouting below.
 
 
-class TestPromoteTargetRouting:
-    def _add(
+class TestSaveTargetRouting:
+    """``hv feedback save --target {rules,architecture,tech-stack}`` writes harness docs directly."""
+
+    def _save(
         self,
         tmp_path: Path,
         task_id: str,
         title: str,
         content: str,
         target: str,
-    ) -> None:
+    ) -> Any:
         f = tmp_path / f"{title.replace(' ', '_')}.txt"
         f.write_text(content, encoding="utf-8")
         runner = CliRunner()
-        result = runner.invoke(
+        return runner.invoke(
             _feedback_group,
             [
-                "draft-add",
-                "-p",
-                "demo",
-                "--task",
-                task_id,
-                "--title",
-                title,
-                "-c",
-                str(f),
-                "--target",
-                target,
+                "save",
+                "-p", "demo",
+                "--task", task_id,
+                "--title", title,
+                "-c", str(f),
+                "--target", target,
             ],
         )
-        assert result.exit_code == 0, result.output
 
-    def test_auto_promote_routes_to_rules(
+    def test_routes_to_rules(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
         _setup_config(tmp_path)
         (tmp_path / "hivemind" / "docs").mkdir(parents=True, exist_ok=True)
 
-        self._add(
+        result = self._save(
             tmp_path,
             "DM-001",
             "never-import-legacy",
             "NEVER import from src/legacy/ in any FastAPI router — scheduled for Q3 removal.",
             "rules",
         )
-
-        runner = CliRunner()
-        result = runner.invoke(
-            _feedback_group, ["promote-drafts", "-p", "demo", "--auto"]
-        )
         assert result.exit_code == 0, result.output
-        assert "harness=1" in result.output
         rules_md = tmp_path / "hivemind" / "docs" / "rules.md"
         assert rules_md.exists()
         text = rules_md.read_text(encoding="utf-8")
         assert "## Learned rules" in text
         assert "NEVER import from src/legacy/" in text
 
-    def test_auto_promote_routes_to_architecture(
+    def test_routes_to_architecture(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
         _setup_config(tmp_path)
         (tmp_path / "hivemind" / "docs").mkdir(parents=True, exist_ok=True)
 
-        self._add(
+        result = self._save(
             tmp_path,
             "DM-002",
             "core-isolation",
             "hivemind.core must not import from hivemind.commands — enforce one-way dependency.",
             "architecture",
         )
-
-        runner = CliRunner()
-        result = runner.invoke(
-            _feedback_group, ["promote-drafts", "-p", "demo", "--auto"]
-        )
-        assert result.exit_code == 0
+        assert result.exit_code == 0, result.output
         arch_md = tmp_path / "hivemind" / "docs" / "architecture.md"
         assert arch_md.exists()
         assert "## Learned constraints" in arch_md.read_text(encoding="utf-8")
@@ -931,14 +804,10 @@ class TestPromoteTargetRouting:
             "NEVER set DEBUG=True in production config.py — it leaks secret "
             "keys into error pages and bypasses auth middleware."
         )
-        self._add(tmp_path, "DM-001", "no-debug-prod-a", body, "rules")
-        self._add(tmp_path, "DM-002", "no-debug-prod-b", body, "rules")
-
-        runner = CliRunner()
-        result = runner.invoke(
-            _feedback_group, ["promote-drafts", "-p", "demo", "--auto"]
-        )
-        assert result.exit_code == 0
+        r1 = self._save(tmp_path, "DM-001", "no-debug-prod-a", body, "rules")
+        r2 = self._save(tmp_path, "DM-002", "no-debug-prod-b", body, "rules")
+        assert r1.exit_code == 0, r1.output
+        assert r2.exit_code == 0, r2.output
         rules_md = tmp_path / "hivemind" / "docs" / "rules.md"
         occurrences = rules_md.read_text(encoding="utf-8").count(body)
         assert occurrences == 1  # deduped
@@ -1086,7 +955,9 @@ class TestAppendToHarnessDocWithBindingKwargs:
             )
 
 
-class TestDraftAddBindingCLI:
+class TestSaveBindingCLI:
+    """``hv feedback save`` auto-detects binding combinations and bypasses the quality gate."""
+
     def _write(self, tmp_path: Path, body: str) -> Path:
         f = tmp_path / "c.txt"
         f.write_text(body, encoding="utf-8")
@@ -1102,7 +973,7 @@ class TestDraftAddBindingCLI:
         result = runner.invoke(
             _feedback_group,
             [
-                "draft-add",
+                "save",
                 "-p", "demo",
                 "--task", "DM-001",
                 "--title", "Impl: foo.py",
@@ -1123,7 +994,7 @@ class TestDraftAddBindingCLI:
         result = runner.invoke(
             _feedback_group,
             [
-                "draft-add",
+                "save",
                 "-p", "demo",
                 "--task", "DM-001",
                 "--title", "x",
@@ -1135,31 +1006,7 @@ class TestDraftAddBindingCLI:
         assert result.exit_code == 2
         assert "--feature is only valid" in result.output
 
-    def test_auto_promote_gate_rejects_non_binding(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.chdir(tmp_path)
-        _setup_config(tmp_path)
-        content = self._write(
-            tmp_path, "NEVER import from legacy in routers — scheduled for removal."
-        )
-        runner = CliRunner()
-        result = runner.invoke(
-            _feedback_group,
-            [
-                "draft-add",
-                "-p", "demo",
-                "--task", "DM-001",
-                "--title", "NEVER legacy",
-                "-c", str(content),
-                "--target", "rules",
-                "--auto-promote",
-            ],
-        )
-        assert result.exit_code == 2
-        assert "binding combinations" in result.output
-
-    def test_features_auto_promote_writes_to_feature_file(
+    def test_features_writes_to_feature_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
@@ -1174,14 +1021,13 @@ class TestDraftAddBindingCLI:
         result = runner.invoke(
             _feedback_group,
             [
-                "draft-add",
+                "save",
                 "-p", "demo",
                 "--task", "DM-001",
                 "--title", "Impl: assign.js",
                 "-c", str(content),
                 "--target", "features",
                 "--feature", "multi-assign",
-                "--auto-promote",
             ],
         )
         assert result.exit_code == 0, result.output
@@ -1190,15 +1036,7 @@ class TestDraftAddBindingCLI:
         assert "[BOUND" in text
         assert "`views/target/js/assign.js`" in text
 
-        # Draft is marked promoted in storage.
-        draft_file = (
-            _v5_reports_dir(tmp_path) / "DM-001-lessons-draft.json"
-        )
-        data = json.loads(draft_file.read_text(encoding="utf-8"))
-        assert data["drafts"][0]["status"] == "promoted"
-        assert data["drafts"][0]["kind"] == "BOUND"
-
-    def test_tech_stack_active_deps_auto_promote_writes_correct_section(
+    def test_tech_stack_active_deps_writes_correct_section(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
@@ -1210,18 +1048,19 @@ class TestDraftAddBindingCLI:
         result = runner.invoke(
             _feedback_group,
             [
-                "draft-add",
+                "save",
                 "-p", "demo",
                 "--task", "DM-002",
                 "--title", "Add dep: express",
                 "-c", str(content),
                 "--target", "tech-stack",
                 "--section", "Active Dependencies",
-                "--auto-promote",
             ],
         )
         assert result.exit_code == 0, result.output
-        tech = (tmp_path / "hivemind" / "docs" / "tech-stack.md").read_text(encoding="utf-8")
+        tech = (tmp_path / "hivemind" / "docs" / "tech-stack.md").read_text(
+            encoding="utf-8"
+        )
         assert "## Active Dependencies" in tech
         # The default Learned patterns section is NOT created for this binding write.
         assert "## Learned patterns" not in tech
@@ -1230,27 +1069,238 @@ class TestDraftAddBindingCLI:
     def test_binding_skips_quality_gate(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Binding content like a bare file path lacks action verbs but must be accepted."""
+        """A bare file path lacks action verbs — would fail the lesson gate but binding bypasses."""
         monkeypatch.chdir(tmp_path)
         _setup_config(tmp_path)
         features = tmp_path / "hivemind" / "docs" / "features"
         features.mkdir(parents=True)
         (features / "00_things.md").write_text("# Things\n", encoding="utf-8")
 
-        # No action verb, no rationale — would fail the lesson quality gate.
         content = self._write(tmp_path, "`src/foo.py`")
         runner = CliRunner()
         result = runner.invoke(
             _feedback_group,
             [
-                "draft-add",
+                "save",
                 "-p", "demo",
                 "--task", "DM-003",
                 "--title", "Impl: src/foo.py",
                 "-c", str(content),
                 "--target", "features",
                 "--feature", "things",
-                "--auto-promote",
             ],
         )
         assert result.exit_code == 0, result.output
+
+
+# ---------------------------------------------------------------------------
+# New CLI surface: applied / rollback / lesson-log
+# ---------------------------------------------------------------------------
+
+
+from hivemind.commands.feedback import (  # noqa: E402
+    _iter_lesson_log,
+)
+from hivemind.core.paths import lesson_log_path  # noqa: E402
+
+
+class TestSaveAppendsLessonLog:
+    """save records every successful write to ``hivemind/reflect/lesson-log.jsonl``."""
+
+    def test_harness_target_logs_entry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _setup_config(tmp_path)
+        (tmp_path / "hivemind" / "docs").mkdir(parents=True, exist_ok=True)
+
+        content_file = tmp_path / "c.txt"
+        content_file.write_text(
+            "NEVER import from `src/legacy/` in any FastAPI router — scheduled for Q3 removal.",
+            encoding="utf-8",
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group,
+            [
+                "save",
+                "-p", "demo",
+                "--task", "DM-100",
+                "--title", "NEVER import legacy",
+                "-c", str(content_file),
+                "--target", "rules",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+        log_path = lesson_log_path(tmp_path)
+        assert log_path.exists()
+        lines = [
+            json.loads(l) for l in log_path.read_text(encoding="utf-8").splitlines() if l
+        ]
+        assert len(lines) == 1
+        assert lines[0]["task_id"] == "DM-100"
+        assert lines[0]["target"] == "rules"
+        assert lines[0]["is_binding"] is False
+        assert lines[0]["kind"] == "LEARNED"
+        assert lines[0]["commit_repo"] == "linked"
+
+    def test_binding_target_logs_bound_kind(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _setup_config(tmp_path)
+        features = tmp_path / "hivemind" / "docs" / "features"
+        features.mkdir(parents=True)
+        (features / "00_things.md").write_text("# Things\n", encoding="utf-8")
+
+        content_file = tmp_path / "c.txt"
+        content_file.write_text("`src/foo.py`", encoding="utf-8")
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group,
+            [
+                "save",
+                "-p", "demo",
+                "--task", "DM-200",
+                "--title", "Impl: foo.py",
+                "-c", str(content_file),
+                "--target", "features",
+                "--feature", "things",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        entries = _iter_lesson_log(tmp_path)
+        assert len(entries) == 1
+        assert entries[0]["is_binding"] is True
+        assert entries[0]["kind"] == "BOUND"
+        assert entries[0]["target"] == "features"
+
+
+class TestAppliedCLI:
+    """``hv feedback applied`` lists lesson-log entries."""
+
+    def _seed_log(self, tmp_path: Path, count: int) -> None:
+        log = lesson_log_path(tmp_path)
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("w", encoding="utf-8") as fh:
+            for i in range(count):
+                entry = {
+                    "ts": f"2026-05-15T0{i}:00:00+00:00",
+                    "task_id": f"DM-{i:03d}",
+                    "title": f"lesson {i}",
+                    "target": "rules",
+                    "file_path": "x",
+                    "commit_hash": f"abc{i:04d}deadbeef",
+                    "commit_repo": "linked",
+                    "is_binding": False,
+                    "kind": "LEARNED",
+                }
+                fh.write(json.dumps(entry) + "\n")
+
+    def test_default_limit_returns_last_n(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _setup_config(tmp_path)
+        self._seed_log(tmp_path, 15)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group, ["applied", "-p", "demo", "--limit", "3", "--format", "json"]
+        )
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert len(parsed) == 3
+        assert parsed[-1]["task_id"] == "DM-014"
+
+    def test_since_task_filters(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _setup_config(tmp_path)
+        self._seed_log(tmp_path, 5)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group,
+            ["applied", "-p", "demo", "--since-task", "DM-001", "--format", "json"],
+        )
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert [e["task_id"] for e in parsed] == ["DM-002", "DM-003", "DM-004"]
+
+    def test_no_entries(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _setup_config(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(_feedback_group, ["applied", "-p", "demo"])
+        assert result.exit_code == 0
+        assert "No applied lessons" in result.output
+
+
+class TestRollbackCLI:
+    """``hv feedback rollback`` resolves entries by --task or --commit."""
+
+    def _seed_log(self, tmp_path: Path) -> dict[str, Any]:
+        log = lesson_log_path(tmp_path)
+        log.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "ts": "2026-05-15T00:00:00+00:00",
+            "task_id": "DM-999",
+            "title": "test lesson",
+            "target": "rules",
+            "file_path": "x",
+            "commit_hash": "deadbeefcafe",
+            "commit_repo": "linked",
+            "is_binding": False,
+            "kind": "LEARNED",
+        }
+        log.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+        return entry
+
+    def test_requires_task_or_commit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _setup_config(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(_feedback_group, ["rollback", "-p", "demo"])
+        assert result.exit_code == 2
+        assert "pass --task or --commit" in result.output
+
+    def test_dry_run_matches_without_reverting(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _setup_config(tmp_path)
+        self._seed_log(tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group,
+            ["rollback", "-p", "demo", "--commit", "deadbeefcafe", "--dry-run"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Match: deadbeefcafe" in result.output
+        assert "dry-run" in result.output
+
+        # rollback-log.jsonl should NOT have been written
+        rb = tmp_path / "hivemind" / "reflect" / "rollback-log.jsonl"
+        assert not rb.exists() or rb.read_text(encoding="utf-8").strip() == ""
+
+    def test_unknown_commit_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        _setup_config(tmp_path)
+        self._seed_log(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            _feedback_group,
+            ["rollback", "-p", "demo", "--commit", "doesnotexist"],
+        )
+        assert result.exit_code == 1
+        assert "No matching lesson-log entry" in result.output

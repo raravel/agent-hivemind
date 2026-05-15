@@ -95,3 +95,18 @@ def link_file_target(project_dir: Path) -> Path:
     target = project_dir / "hivemind" / _NEW_LINK_NAME
     target.parent.mkdir(parents=True, exist_ok=True)
     return target
+
+
+def reflect_dir(linked_path: Path | str) -> Path:
+    """Return ``<linked_path>/hivemind/reflect`` — meta-harness reflection logs."""
+    return project_hivemind_dir(linked_path) / "reflect"
+
+
+def lesson_log_path(linked_path: Path | str) -> Path:
+    """Return path to ``lesson-log.jsonl`` (auto-applied feedback entries)."""
+    return reflect_dir(linked_path) / "lesson-log.jsonl"
+
+
+def rollback_log_path(linked_path: Path | str) -> Path:
+    """Return path to ``rollback-log.jsonl`` (auto-rollback events)."""
+    return reflect_dir(linked_path) / "rollback-log.jsonl"

@@ -1,84 +1,114 @@
 ---
-description: "Extract and save session feedback as L2 lessons. Use at the end of a session or when the user wants to record lessons learned."
+description: "Save a learning directly to L2 or a harness doc via 'hv feedback save'. Single entry point; no draft queue; no confirmation. Called by hv-task auto pipeline or by the user."
 ---
 
-# hv-feedback -- Session feedback extraction
+# hv-feedback -- Direct lesson save
 
-Extracts lessons learned from the current conversation or work session and saves them as L2 (Level 2) documents in the hivemind knowledge base. Always confirms with the user before saving.
+Extracts a lesson from the current session or task incident and saves it
+immediately via `hv feedback save`. No drafts, no human gate. The CLI
+enforces the quality gate; binding combinations (features / tech-stack
+Active Dependencies) bypass it automatically. Every successful save is
+an isolated git commit so it can be auto-reverted if subsequent review
+scores regress (see hv-task step 15.5).
 
 ## When to use
 
-- End of a coding session where something notable was learned
-- After a bug fix where the root cause is worth documenting
-- After discovering a project convention or gotcha
-- User says "save feedback", "record this lesson", "remember this"
-- User asks the `hv` plugin to save feedback explicitly
-- Called at the end of the `hv-task` pipeline
+- At the end of `hv-task` (called by step 15 auto-save)
+- When the user says "save feedback", "remember this", "record this lesson"
+- After a notable bug fix or convention discovery
 
 ## Steps
 
-### 1. Identify lessons learned
+### 1. Identify the lesson
 
-Review the current conversation for:
-- Bug root causes and their fixes
-- Project-specific conventions discovered
-- Tool configurations or environment quirks
-- Patterns that worked well (or didn't)
-- Common pitfalls to avoid
+Compose a concise lesson following the criteria in
+[references/lesson-quality-guide.md](references/lesson-quality-guide.md):
 
-Compose a concise lesson following the quality criteria in [references/lesson-quality-guide.md](references/lesson-quality-guide.md):
-- **Specific**: Name the exact technology, pattern, or API
-- **Actionable**: State what to do, not just what went wrong
-- **Contextual**: Explain when this applies
-- **Concise**: One paragraph, not an essay
+- **Specific**: name the technology, file path, or identifier
+- **Actionable**: use a verb -- `use`, `avoid`, `set`, `add`, `prefer`, etc.
+- **Contextual**: explain when this applies (one phrase)
+- **Concise**: 50-500 characters
 
-### 2. Present the lesson to the user for confirmation
+### 2. Pick a target
 
-Show the user:
-- **Title**: The proposed lesson title
-- **Category**: Auto-detected category (frontend/backend/infra/general)
-- **Content**: The full lesson text
+| Target | When to use | Example |
+|---|---|---|
+| `L2` | Generic, reusable across projects | "FastAPI CORSMiddleware must precede custom middleware" |
+| `rules` | NEVER/ALWAYS rule specific to THIS project | "NEVER import from `src/legacy/` -- scheduled for Q3 removal" |
+| `tech-stack` | Library version / compat decision for THIS project's stack | "Pin python-frontmatter==1.1.0 until #42 fixes stdin handling" |
+| `architecture` | Module boundary / dependency direction for THIS project | "`hivemind.core` must not import from `hivemind.commands`" |
+| `features` | File-path binding to a feature (mechanical, not a lesson) | "`src/auth/jwt.py` -- token validation" |
 
-Ask: "Save this feedback to the knowledge base?"
+**Rule of thumb**: if the lesson names *this project's* files / modules /
+policies → harness target. If it names a *public library behavior* the
+same way any project would → `L2`.
 
-**ALWAYS wait for user confirmation before proceeding.**
+### 3. Save
 
-### 3. Save the feedback
-
-Write the lesson content to a temporary file and pass it to the CLI:
-```
-hv feedback save -p <project> -t "<title>" -c /tmp/hv-feedback-content.txt
+```bash
+hv feedback save \
+  -p <project> \
+  --task <TASK-ID> \
+  --title "<title>" \
+  --target <L2|rules|tech-stack|architecture|features> \
+  [--feature <slug>] \
+  [--section "<heading>"] \
+  -c /tmp/lesson.txt
 ```
 
 Or pipe via stdin:
+
+```bash
+echo "<lesson body>" | hv feedback save \
+  -p <project> --task <TASK-ID> -t "<title>" --target <target>
 ```
-echo "<lesson content>" | hv feedback save -p <project> -t "<title>"
-```
 
-The `hv feedback save` command will:
-- Run BM25 similarity check against existing L2 documents
-- If a similar lesson exists: increment its hit count and add a source link
-- If no similar lesson exists: create a new L2 document
-- Auto-detect the category (frontend/backend/infra/general)
-- Update the search index
+### 4. Handle the result
 
-### 4. Report results
+- Exit 0 → docs updated + isolated git commit (subject contains
+  `[lesson:<TASK-ID>]`) + entry appended to
+  `hivemind/reflect/lesson-log.jsonl`. Echo the CLI output as-is.
+- Exit 1 → quality gate rejected the lesson. Read the reason from
+  stderr. Make ONE attempt to fix the lesson (add a verb, name a
+  concrete tech, shorten / extend). If the second attempt is also
+  rejected, stop -- do NOT pass `--skip-gate`.
+- Exit 2 → usage error (missing `--feature`, etc.). Fix and retry.
 
-Show the user:
-- Whether a new document was created or an existing one was updated
-- The file path of the affected document
-- The detected category
-- If the document has high hits, suggest promotion to L1
+## Rules
 
-See [references/l2-format.md](references/l2-format.md) for the L2 document format.
+- **English only** for titles, content, rationale. The BM25 index expects English.
+- **NEVER write feedback files directly.** Use `hv feedback save` -- it
+  handles category detection, BM25 dedup, doc append, and the isolated
+  lesson commit atomically.
+- **Quality gate is enforced by the CLI.** Do NOT pass `--skip-gate`.
+  Binding combinations are bypassed automatically; explicit skip is
+  reserved for very narrow caller overrides and is not used here.
+- **One lesson per call.** If a session yields multiple lessons, call
+  `save` once per lesson with the appropriate `--target` for each.
+- **Binding writes are mechanical.** When you use `--target features
+  --feature <slug>` or `--target tech-stack --section 'Active
+  Dependencies'`, the entry is a binding record (not a reusable lesson)
+  and bypasses the quality gate. Use these only for file-path / pinned-
+  version records, never for prose lessons.
 
-## Important Rules
+## Related commands
 
-- ALWAYS get user confirmation before saving feedback. This is a mandatory rule with NO exceptions.
-- NEVER write L2 documents in Korean. All titles and content must be in English.
-- NEVER manually create or edit L2 markdown files. Always use `hv feedback save` via Bash.
-- NEVER save trivial or obvious information. Focus on non-obvious lessons that future agents would benefit from.
-- When a saved lesson leads to adding a new rule in `rules.md`, tag the rule with origin: `<!-- origin: level2/category/slug.md -->`
-- ALWAYS include a clear, descriptive title that future searches can match against.
-- If the user declines to save, respect their decision and do NOT save.
-- When called from `hv-task`, still present the lesson and ask for confirmation unless running in fully automated mode.
+- `hv feedback applied -p <project> --limit N [--format json]` -- list
+  recent lesson-log entries.
+- `hv feedback rollback -p <project> --commit <hash> [--reason TEXT]`
+  -- revert a lesson commit. Called automatically by `hv-task` step 15.5
+  when trailing review scores regress.
+
+## Removed in v5
+
+The earlier draft queue (`hv feedback draft-add` →
+`hv feedback promote-drafts`) is gone. Those commands remain as
+deprecated stubs that redirect to `save` for backwards compatibility but
+will be removed in the next major version. The "ALWAYS get user
+confirmation" rule and the `fully automated mode` distinction are also
+gone: there is one path, and it never blocks for human input.
+
+See [references/l2-format.md](references/l2-format.md) for the L2
+document format and
+[references/lesson-quality-guide.md](references/lesson-quality-guide.md)
+for the quality gate criteria the CLI enforces.

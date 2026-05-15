@@ -271,14 +271,13 @@ Worker retry: max **1** (the worker can revert the contract change — they cann
 
    ```bash
    echo "\`<path>\` — <one-line role from your verification observation>" | \
-     hv feedback draft-add \
+     hv feedback save \
        -p <project> --task <TASK-ID> \
        --title "Implementation: <path>" \
-       --target features --feature <slug> \
-       --auto-promote
+       --target features --feature <slug>
    ```
 
-   `--auto-promote` skips the lesson quality gate (binding entries are mechanical, not reusable lessons) and writes immediately under `## Implementation`. Exit 0 = appended; output `harness-duplicate` = already present, no-op.
+   The CLI auto-detects the binding combination (`features` target with a feature slug), bypasses the lesson quality gate, and writes the entry directly under `## Implementation`. Output line starting `No change (duplicate content)` = already present, no-op.
 
 **Dep binding.** If any manifest file is in `changed_files`:
 
@@ -289,11 +288,10 @@ Worker retry: max **1** (the worker can revert the contract change — they cann
    ```
 2. For each *added* dependency, append:
    ```bash
-   echo "<name> <version> — <one-line role>" | hv feedback draft-add \
+   echo "<name> <version> — <one-line role>" | hv feedback save \
      -p <project> --task <TASK-ID> \
      --title "Add dep: <name>@<version>" \
-     --target tech-stack --section "Active Dependencies" \
-     --auto-promote
+     --target tech-stack --section "Active Dependencies"
    ```
 3. For each *removed* dependency: do NOT auto-remove from `tech-stack.md`. Could be intentional cleanup or temporary. Instead, in the report's `## Notes`, list: `removed deps not auto-pruned from tech-stack.md: <list>`. The user prunes manually on confirmation.
 
@@ -411,9 +409,9 @@ Append a `## Incident` section ONLY if any of:
 
 **Do NOT invoke `hv-feedback` or save to L2.** Let the user review and promote later.
 
-### 15. Auto-draft lesson candidates (same trigger as incident)
+### 15. Auto-save lesson candidates (same trigger as incident)
 
-When step 14 produced an Incident section, extract **0–3 reusable-lesson candidates** and pipe each to `hv feedback draft-add`. The CLI enforces a quality gate — rejected candidates are not saved.
+When step 14 produced an Incident section, extract **0–3 reusable-lesson candidates** and pipe each to `hv feedback save`. The CLI enforces a quality gate — rejected candidates are not saved.
 
 For each candidate:
 1. Title (one phrase, ≤120 chars) naming the technology and the fix.
@@ -436,16 +434,41 @@ For each candidate:
 Pipe it:
 
 ```bash
-cat <<EOF | hv feedback draft-add -p <project> --task <TASK-ID> \
+cat <<EOF | hv feedback save -p <project> --task <TASK-ID> \
   --title "<title>" --target <L2|rules|tech-stack|architecture>
 <content body>
 EOF
 ```
 
-- Exit 0 → draft saved under `_reports/{TASK-ID}-lessons-draft.json`.
-- Exit 1 → gate rejected it (stderr has the reason). Try once to fix the reason; if still rejected, skip and do NOT work around the gate.
+- Exit 0 → docs updated + isolated git commit (subject contains `[lesson:<TASK-ID>]`) + entry appended to `hivemind/reflect/lesson-log.jsonl`. The CLI prints the commit hash on stdout.
+- Exit 1 → gate rejected it (stderr has the reason). Try once to fix the reason; if still rejected, skip and do NOT work around the gate (do NOT pass `--skip-gate`).
 
-**Do NOT promote drafts yourself.** The user invokes `hv feedback promote-drafts -p <project>` later to confirm, override the target, or reject each one. L2 goes through BM25 dedup; harness targets append a dated bullet under `## Learned rules/patterns/constraints`.
+Lessons land *immediately* in the chosen target — L2 with BM25 dedup, or a harness doc under `## Learned rules/patterns/constraints`. The time-delayed rollback gate in step 15.5 will revert the commit if subsequent `review_scores` regress.
+
+### 15.5. Rollback gate (time-delayed, automatic)
+
+After Step 15, evaluate whether any recent lesson commit should be reverted based on trailing review scores. No user prompt; this step is fully automatic.
+
+**Inputs:**
+- Recent lesson entries: `hv feedback applied -p <project> --limit 5 --format json`
+- Task reports from `<linked>/hivemind/tasks/_reports/*.md` (read `completed_at` and `review_scores` from frontmatter)
+
+**Procedure:**
+1. If fewer than 6 reports exist in `_reports/` → skip (insufficient signal).
+2. For each lesson entry `e` returned by `applied`:
+   - Identify the 3 reports completed just BEFORE `e.ts` → compute per-axis averages of `review_scores.{correctness, spec_compliance, safety}` → `pre_avg`.
+   - Identify the 3 reports completed just AFTER `e.ts` → compute per-axis averages → `post_avg`.
+   - For each blocking axis (correctness, spec_compliance, safety), compute `post_avg[axis] - pre_avg[axis]`. If the drop exceeds **0.5** on any axis → mark `e` for rollback.
+   - If fewer than 3 reports exist on either side of `e.ts`, skip that entry (signal is too thin).
+3. For each marked entry, in chronological order:
+   ```bash
+   hv feedback rollback -p <project> --commit <e.commit_hash> \
+     --reason "trailing review_scores regression: <axis> pre=<x> post=<y>"
+   ```
+4. Echo each rollback line to the user. Do not prompt; do not block.
+
+**Calibration safety valve:**
+- If you observe rollback churn (more than 1 rollback per 5 recent saves) within a single hv-task invocation, STOP issuing further rollbacks and report to the user — the threshold is mis-calibrated or the trailing signal is too noisy for the current task volume.
 
 ### 16. Next task
 
