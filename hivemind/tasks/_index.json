@@ -1,4 +1,263 @@
 {
-  "version": 1,
-  "tasks": {}
+  "version": 2,
+  "tasks": {
+    "AGE-001": {
+      "status": "pending",
+      "priority": "high",
+      "type": "epic",
+      "parent": null,
+      "depends_on": [],
+      "title": "Harness Plugin v2.1 Improvements",
+      "updated": "2026-04-05",
+      "completed_at": null,
+      "path": "active/AGE-001.md"
+    },
+    "AGE-002": {
+      "status": "pending",
+      "priority": "high",
+      "type": "story",
+      "parent": "AGE-001",
+      "depends_on": [],
+      "title": "Orchestrator Pipeline",
+      "updated": "2026-04-05",
+      "completed_at": null,
+      "path": "active/AGE-002.md"
+    },
+    "AGE-003": {
+      "status": "pending",
+      "priority": "high",
+      "type": "story",
+      "parent": "AGE-001",
+      "depends_on": [],
+      "title": "Task System Fixes",
+      "updated": "2026-04-05",
+      "completed_at": null,
+      "path": "active/AGE-003.md"
+    },
+    "AGE-004": {
+      "status": "pending",
+      "priority": "medium",
+      "type": "story",
+      "parent": "AGE-001",
+      "depends_on": [],
+      "title": "Pipeline Quality",
+      "updated": "2026-04-05",
+      "completed_at": null,
+      "path": "active/AGE-004.md"
+    },
+    "AGE-005": {
+      "status": "pending",
+      "priority": "medium",
+      "type": "story",
+      "parent": "AGE-001",
+      "depends_on": [],
+      "title": "Knowledge Base Tuning",
+      "updated": "2026-04-05",
+      "completed_at": null,
+      "path": "active/AGE-005.md"
+    },
+    "AGE-017": {
+      "status": "pending",
+      "priority": "medium",
+      "type": "story",
+      "parent": "AGE-001",
+      "depends_on": [],
+      "title": "Search and Feedback Improvements",
+      "updated": "2026-04-05",
+      "completed_at": null,
+      "path": "active/AGE-017.md"
+    },
+    "AGE-006": {
+      "status": "done",
+      "priority": "high",
+      "type": "task",
+      "parent": "AGE-002",
+      "depends_on": [],
+      "title": "Rewrite task SKILL.md to orchestrator model",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-006.md"
+    },
+    "AGE-007": {
+      "status": "done",
+      "priority": "high",
+      "type": "task",
+      "parent": "AGE-002",
+      "depends_on": [
+        "AGE-006"
+      ],
+      "title": "Update pipeline-stages.md reference",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-007.md"
+    },
+    "AGE-008": {
+      "status": "done",
+      "priority": "high",
+      "type": "task",
+      "parent": "AGE-002",
+      "depends_on": [
+        "AGE-006"
+      ],
+      "title": "Rewrite agent-prompts.md for orchestrator and workers",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-008.md"
+    },
+    "AGE-009": {
+      "status": "done",
+      "priority": "medium",
+      "type": "task",
+      "parent": "AGE-002",
+      "depends_on": [
+        "AGE-006"
+      ],
+      "title": "Update error-handling.md for orchestrator retry logic",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-009.md"
+    },
+    "AGE-010": {
+      "status": "done",
+      "priority": "high",
+      "type": "bug",
+      "parent": "AGE-003",
+      "depends_on": [],
+      "title": "Fix VALID_STATUSES: add blocked and cancelled",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-010.md"
+    },
+    "AGE-011": {
+      "status": "done",
+      "priority": "medium",
+      "type": "task",
+      "parent": "AGE-003",
+      "depends_on": [
+        "AGE-010"
+      ],
+      "title": "Add task index (_index.json) for scan performance",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-011.md"
+    },
+    "AGE-012": {
+      "status": "done",
+      "priority": "medium",
+      "type": "task",
+      "parent": "AGE-004",
+      "depends_on": [
+        "AGE-006"
+      ],
+      "title": "Add completion criteria verification to orchestrator",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-012.md"
+    },
+    "AGE-013": {
+      "status": "done",
+      "priority": "medium",
+      "type": "task",
+      "parent": "AGE-004",
+      "depends_on": [
+        "AGE-008"
+      ],
+      "title": "Add boundary mismatch rules to reviewer prompt",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-013.md"
+    },
+    "AGE-014": {
+      "status": "done",
+      "priority": "medium",
+      "type": "task",
+      "parent": "AGE-005",
+      "depends_on": [],
+      "title": "Add L2 lesson quality guidelines to feedback references",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-014.md"
+    },
+    "AGE-015": {
+      "status": "done",
+      "priority": "low",
+      "type": "chore",
+      "parent": "AGE-005",
+      "depends_on": [],
+      "title": "Improve skill trigger descriptions (data-driven)",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-015.md"
+    },
+    "AGE-016": {
+      "status": "done",
+      "priority": "medium",
+      "type": "task",
+      "parent": "AGE-005",
+      "depends_on": [],
+      "title": "Add L2 feedback origin ID tagging to rules",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-016.md"
+    },
+    "AGE-018": {
+      "status": "done",
+      "priority": "medium",
+      "type": "task",
+      "parent": "AGE-017",
+      "depends_on": [],
+      "title": "Add --category filter to hv search",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-018.md"
+    },
+    "AGE-019": {
+      "status": "done",
+      "priority": "medium",
+      "type": "task",
+      "parent": "AGE-017",
+      "depends_on": [],
+      "title": "Add title token weighting to BM25 indexer",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-019.md"
+    },
+    "AGE-020": {
+      "status": "done",
+      "priority": "medium",
+      "type": "task",
+      "parent": "AGE-017",
+      "depends_on": [],
+      "title": "Add --reason flag to hv task update for blocked tasks",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-020.md"
+    },
+    "AGE-021": {
+      "status": "done",
+      "priority": "high",
+      "type": "task",
+      "parent": "AGE-017",
+      "depends_on": [
+        "AGE-020"
+      ],
+      "title": "Replace feedback step with auto incident recording in pipeline",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-021.md"
+    },
+    "AGE-022": {
+      "status": "done",
+      "priority": "low",
+      "type": "task",
+      "parent": "AGE-017",
+      "depends_on": [
+        "AGE-021"
+      ],
+      "title": "Add unreviewed incident reminder to task pipeline",
+      "updated": "2026-04-05",
+      "completed_at": "2026-04-05T00:00:00",
+      "path": "done/AGE-022.md"
+    }
+  }
 }
