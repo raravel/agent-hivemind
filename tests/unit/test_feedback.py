@@ -1146,6 +1146,7 @@ class TestSaveAppendsLessonLog:
         assert lines[0]["is_binding"] is False
         assert lines[0]["kind"] == "LEARNED"
         assert lines[0]["commit_repo"] == "linked"
+        assert lines[0]["file_path"] == "hivemind/docs/rules.md"
 
     def test_binding_target_logs_bound_kind(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1177,6 +1178,7 @@ class TestSaveAppendsLessonLog:
         assert entries[0]["is_binding"] is True
         assert entries[0]["kind"] == "BOUND"
         assert entries[0]["target"] == "features"
+        assert entries[0]["file_path"] == "hivemind/docs/features/00_things.md"
 
 
 class TestAppliedCLI:

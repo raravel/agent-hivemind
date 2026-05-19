@@ -704,12 +704,19 @@ def save(
     #    project skips the log: there is no project to roll the lesson back
     #    against.
     if linked_path is not None:
+        # Store doc path relative to its hosting root so the log stays portable
+        # when the project repo is shared (no leaking of local home paths).
+        rel_base = data_path if resolved_target == "L2" else linked_path
+        try:
+            rel_doc_path = doc_path.relative_to(rel_base).as_posix()
+        except ValueError:
+            rel_doc_path = str(doc_path)
         entry = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "task_id": source_task,
             "title": title,
             "target": resolved_target,
-            "file_path": str(doc_path),
+            "file_path": rel_doc_path,
             "commit_hash": commit_hash,
             "commit_repo": commit_repo,
             "is_binding": is_binding,
