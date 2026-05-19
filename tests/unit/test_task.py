@@ -72,21 +72,39 @@ def _tasks_dir(tmp_path: Path, project: str = "myproj") -> Path:
 
 
 def _task_file(tmp_path: Path, short_id: str, project: str = "myproj") -> Path:
-    """Resolve ``MP-001`` short form to the v5.1 hash-suffixed file.
+    """Resolve ``MP-001`` short form to its file under the tasks dir.
 
-    Falls back to the legacy ``MP-001.md`` (no hash) if the new form is
-    absent — keeps test fixtures portable between layouts.
+    Searches ``active/``, ``done/``, each ``archive/{YYYY-MM}/``, and the
+    flat ``tasks/`` root (legacy v5 layout) so fixtures stay portable
+    across layout migrations. Accepts both the canonical hash-suffixed
+    form and the legacy short form.
     """
     tasks = _tasks_dir(tmp_path, project)
-    legacy = tasks / f"{short_id}.md"
-    if legacy.exists():
-        return legacy
-    matches = sorted(tasks.glob(f"{short_id}-*.md"))
-    if len(matches) == 1:
-        return matches[0]
-    if len(matches) > 1:
+    candidates: list[Path] = []
+    search_roots = [
+        tasks / "active",
+        tasks / "done",
+    ]
+    archive_root = tasks / "archive"
+    if archive_root.is_dir():
+        search_roots.extend(
+            sub for sub in sorted(archive_root.iterdir()) if sub.is_dir()
+        )
+    search_roots.append(tasks)  # legacy flat fallback
+
+    for root in search_roots:
+        if not root.is_dir():
+            continue
+        direct = root / f"{short_id}.md"
+        if direct.exists():
+            return direct
+        candidates.extend(sorted(root.glob(f"{short_id}-*.md")))
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
         raise AssertionError(
-            f"Ambiguous short ID {short_id!r}: {[p.name for p in matches]}"
+            f"Ambiguous short ID {short_id!r}: {[p.name for p in candidates]}"
         )
     raise FileNotFoundError(f"No task matching {short_id!r} in {tasks}")
 
@@ -598,7 +616,7 @@ class TestTaskIndex:
         tasks_dir = tmp_path / "tasks"
         tasks_dir.mkdir(parents=True)
         index_data: dict[str, Any] = {
-            "version": 1,
+            "version": 2,
             "tasks": {
                 "P-001": {
                     "status": "pending",
@@ -608,6 +626,7 @@ class TestTaskIndex:
                     "depends_on": [],
                     "title": "Test",
                     "updated": "2025-01-01",
+                    "path": "active/P-001.md",
                 },
             },
         }
@@ -615,6 +634,19 @@ class TestTaskIndex:
         loaded = _load_task_index(tasks_dir)
         assert loaded is not None
         assert loaded["tasks"]["P-001"]["status"] == "pending"
+        assert loaded["tasks"]["P-001"]["path"] == "active/P-001.md"
+
+    def test_load_returns_none_for_legacy_v1_index(self, tmp_path: Path) -> None:
+        """v1 indexes are stale (no ``path`` field) — loader returns None
+        so the caller rebuilds. Validates the upgrade fallback."""
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir(parents=True)
+        legacy: dict[str, Any] = {
+            "version": 1,
+            "tasks": {"P-001": {"status": "pending"}},
+        }
+        _save_task_index(tasks_dir, legacy)
+        assert _load_task_index(tasks_dir) is None
 
     def test_fm_to_index_entry_extracts_fields(self) -> None:
         fm: dict[str, object] = {
@@ -664,7 +696,10 @@ class TestTaskIndex:
         assert id1 in index_data["tasks"]
         assert id2 in index_data["tasks"]
         assert index_data["tasks"][id1]["title"] == "First"
-        assert index_data["version"] == 1
+        assert index_data["version"] == 2
+        # v2 records the per-task location relative to tasks_dir.
+        assert index_data["tasks"][id1]["path"] == f"active/{id1}.md"
+        assert index_data["tasks"][id2]["path"] == f"active/{id2}.md"
 
         # File should exist on disk
         assert idx_path.exists()
@@ -790,10 +825,11 @@ class TestTaskIndex:
         idx_path = _tasks_dir(tmp_path) / "_index.json"
         raw = json.loads(idx_path.read_text(encoding="utf-8"))
 
-        assert raw["version"] == 1
+        assert raw["version"] == 2
         assert isinstance(raw["tasks"], dict)
 
-        entry = raw["tasks"][_task_id(tmp_path, "MP-001")]
+        canonical = _task_id(tmp_path, "MP-001")
+        entry = raw["tasks"][canonical]
         assert entry["status"] == "pending"
         assert entry["priority"] == "high"
         assert entry["type"] == "task"
@@ -802,6 +838,8 @@ class TestTaskIndex:
         assert entry["title"] == "Schema test"
         assert "updated" in entry
         assert "completed_at" in entry
+        # v2: ``path`` field records the file's location relative to tasks_dir.
+        assert entry["path"] == f"active/{canonical}.md"
 
 
 class TestTaskBodyAndCriteria:

@@ -47,10 +47,18 @@ graph TB
         GIT["git.py — auto-commit"]
     end
 
-    subgraph "Data Directory (~/agent-hivemind-data)"
+    subgraph "Per-Project In-Repo (<project>/hivemind/)"
+        DOCS["docs/ (architecture, rules, features…)"]
+        TASKS_ACTIVE["tasks/active/  (pending · in_progress · in_review · rejected)"]
+        TASKS_DONE["tasks/done/  (recently completed)"]
+        TASKS_ARCHIVE["tasks/archive/{YYYY-MM}/  (long-finished)"]
+        TASKS_INDEX["tasks/_index.json  (v2: per-task path)"]
+        REPORTS["tasks/_reports/{TASK-ID}-report.md"]
+        LINK["link.json"]
+    end
+
+    subgraph "Cross-Project Data Directory (~/agent-hivemind-data)"
         HIVEMIND_JSON[".hivemind.json"]
-        PROJECTS["projects/{name}/"]
-        TASKS["tasks/{name}/"]
         L1["level1/important.md"]
         L2["level2/{category}/"]
         L3["level3/{name}/"]
@@ -80,13 +88,13 @@ graph TB
     CMD_INDEX --> INDEXER
 
     CONFIG --> HIVEMIND_JSON
-    PARSER --> TASKS
+    PARSER --> TASKS_ACTIVE & TASKS_DONE & TASKS_ARCHIVE
     INDEXER --> INDEX & L2
     SIMILARITY --> L2
     GIT --> HIVEMIND_JSON
 
     H_SESSION --> L3
-    S_PLAN --> PROJECTS
+    S_PLAN --> DOCS
     S_FEEDBACK --> L2
     S_IMPORTANT --> L1
 ```
@@ -201,3 +209,5 @@ sequenceDiagram
 3. **Hierarchical tasks** — Epic -> Story/Feature -> Task/Bug/Chore. Auto-completion propagates upward.
 4. **Skills as Markdown** — Plugin skills are plain Markdown files with execution instructions, not code. Claude Code interprets them.
 5. **Hooks as JavaScript** — Claude Code hooks run JS natively; Python hooks would need a bridge.
+6. **Task lifecycle directories (v6)** — `hivemind/tasks/` is split into `active/` (open work), `done/` (recently completed, short stay), and `archive/{YYYY-MM}/` (long-finished). `hv task update` moves files across the boundary; `hv task archive --older-than 14d` moves stale `done/` entries into the monthly bucket. Keeps the active view small without sacrificing the wiki-readable layout.
+7. **`auto_commit` defaults to OFF (v6)** — Task/state mutations don't auto-create commits. The orchestrator (`/hv:task` and friends) bundles every `hivemind/` change into the same git commit as the code change for the task. Users who want eager commits opt in explicitly via `hv config set auto_commit true`.

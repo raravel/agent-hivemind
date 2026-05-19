@@ -314,7 +314,7 @@ class TestConfigVersionCheck:
         (data_path / "level2").mkdir(parents=True)
         (data_path / "level3").mkdir(parents=True)
         cfg = default_config()
-        cfg["version"] = "5.1.0"
+        cfg["version"] = "6.0.0"
         cfg["data_path"] = str(data_path)
         _write_config(data_path, cfg)
 
@@ -323,7 +323,7 @@ class TestConfigVersionCheck:
         )
         result, _ = doctor_module._check_config()
         assert result.severity == "ok"
-        assert "v5.1.0" in result.detail
+        assert "v6.0.0" in result.detail
 
     def test_v4_version_warns_with_v5_hint(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

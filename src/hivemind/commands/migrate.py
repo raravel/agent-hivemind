@@ -666,6 +666,7 @@ def print_completed_at_migration_summary(summary: dict[str, Any]) -> None:
 
 SCHEMA_V5 = "5.0.0"
 SCHEMA_V5_1 = "5.1.0"
+SCHEMA_V6 = "6.0.0"
 
 
 def _is_git_repo(path: Path) -> bool:
@@ -1073,6 +1074,194 @@ def print_v5_1_migration_summary(summary: dict[str, Any]) -> None:
         click.echo(f"  Schema version bumped to {SCHEMA_V5_1}.")
 
 
+# ---------------------------------------------------------------------------
+# v5.1 -> v6: split tasks/ into active/done/archive and bump _index.json to v2
+# ---------------------------------------------------------------------------
+
+
+def _classify_task_status(status: object) -> str:
+    """Return ``"done"`` for terminal statuses, otherwise ``"active"``.
+
+    Mirrors the task.py runtime split so the on-disk layout matches what
+    ``hv task create`` and ``hv task update`` would produce post-migration.
+    """
+    return "done" if str(status or "") in {"done", "cancelled"} else "active"
+
+
+def migrate_v5_to_v6(
+    data_path: Path,
+    only_projects: list[str] | None = None,
+    *,
+    commit: bool = True,
+) -> dict[str, Any]:
+    """Split each project's ``hivemind/tasks/`` into ``active/`` and ``done/``.
+
+    For every registered project with a valid ``linked_path``:
+      - Each top-level ``hivemind/tasks/*.md`` is read; the frontmatter's
+        ``status`` decides whether it lands in ``active/`` (pending,
+        in_progress, in_review, rejected, blocked, …) or ``done/`` (done,
+        cancelled). ``_reports/`` and other reserved ``_``-prefixed
+        entries stay where they are.
+      - ``_index.json`` is rebuilt at schema v2 with each task's relative
+        ``path`` recorded.
+
+    Idempotent: re-running after every task is already in active/done is
+    a no-op (the index just gets refreshed). The schema version is bumped
+    to v6 only when no ``only_projects`` filter is active.
+    """
+    summary: dict[str, Any] = {
+        "projects": [],
+        "skipped": [],
+        "version_updated": False,
+        "auto_commit_current": None,
+    }
+
+    config_path = data_path / ".hivemind.json"
+    if not config_path.exists():
+        return summary
+
+    try:
+        with config_path.open("r", encoding="utf-8") as f:
+            cfg_data: dict[str, Any] = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return summary
+
+    summary["auto_commit_current"] = bool(cfg_data.get("auto_commit", False))
+
+    projects = cfg_data.get("projects") or {}
+    if not isinstance(projects, dict):
+        projects = {}
+
+    only = set(only_projects) if only_projects else None
+
+    # Local imports avoid pulling task internals into module load.
+    from hivemind.commands.task import _rebuild_task_index
+    from hivemind.core.parser import parse_task
+
+    for name, proj in projects.items():
+        if only is not None and name not in only:
+            continue
+        if not isinstance(proj, dict):
+            continue
+        linked_raw = proj.get("linked_path")
+        if not isinstance(linked_raw, str) or not linked_raw:
+            summary["skipped"].append({"project": name, "reason": "no linked_path"})
+            continue
+        linked = Path(linked_raw).expanduser()
+        if not linked.exists():
+            summary["skipped"].append(
+                {"project": name, "reason": f"linked_path missing: {linked}"}
+            )
+            continue
+
+        tasks_dir = linked / "hivemind" / "tasks"
+        if not tasks_dir.is_dir():
+            summary["skipped"].append({"project": name, "reason": "no tasks dir"})
+            continue
+
+        active = tasks_dir / "active"
+        done = tasks_dir / "done"
+
+        proj_summary: dict[str, Any] = {
+            "project": name,
+            "linked_path": str(linked),
+            "active_moved": 0,
+            "done_moved": 0,
+            "errors": [],
+        }
+
+        # Walk only the flat layer — never recurse into existing
+        # active/done/archive subdirectories so re-runs are no-ops.
+        for md_file in sorted(tasks_dir.glob("*.md")):
+            if md_file.name.startswith("_"):
+                continue
+            try:
+                fm, _body = parse_task(md_file)
+            except Exception as exc:  # noqa: BLE001
+                proj_summary["errors"].append(
+                    {"file": md_file.name, "reason": str(exc)}
+                )
+                continue
+            bucket = _classify_task_status(fm.get("status"))
+            target_dir = active if bucket == "active" else done
+            target = target_dir / md_file.name
+            if target.exists():
+                # Same name already at target — assume previously
+                # migrated and the flat file is a stale leftover. Skip.
+                continue
+            if _move_path(md_file, target, repo=linked):
+                if bucket == "active":
+                    proj_summary["active_moved"] += 1
+                else:
+                    proj_summary["done_moved"] += 1
+
+        # Always rebuild the index — it captures path fields needed by
+        # the v2 schema even when nothing moved this run.
+        _rebuild_task_index(tasks_dir)
+
+        if commit:
+            from hivemind.core.git import auto_commit
+
+            committed = auto_commit(
+                linked,
+                "chore(hivemind): split tasks into active/done (v6)",
+                force=True,
+            )
+            proj_summary["committed"] = committed
+
+        summary["projects"].append(proj_summary)
+
+    if only is None and cfg_data.get("version") != SCHEMA_V6:
+        cfg_data["version"] = SCHEMA_V6
+        config_path.write_text(
+            json.dumps(cfg_data, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        summary["version_updated"] = True
+
+    if commit:
+        from hivemind.core.git import auto_commit
+
+        summary["data_committed"] = auto_commit(
+            data_path, "chore(hivemind): v5.1 -> v6 migration", force=True
+        )
+
+    return summary
+
+
+def print_v6_migration_summary(summary: dict[str, Any]) -> None:
+    click.echo("Migration summary (v5.1 -> v6):")
+    projects = summary.get("projects") or []
+    if not projects:
+        click.echo("  No projects to migrate.")
+    for p in projects:
+        click.echo(
+            f"  - {p['project']}: "
+            f"{p.get('active_moved', 0)} -> active/, "
+            f"{p.get('done_moved', 0)} -> done/"
+        )
+        if "committed" in p:
+            click.echo(
+                f"      committed: {'yes' if p['committed'] else 'no (not a git repo or nothing to commit)'}"
+            )
+        for err in p.get("errors") or []:
+            click.echo(f"      WARN: {err['file']} — {err['reason']}")
+    for s in summary.get("skipped", []) or []:
+        click.echo(f"  - SKIP {s['project']}: {s['reason']}")
+    if summary.get("version_updated"):
+        click.echo(f"  Schema version bumped to {SCHEMA_V6}.")
+    if "data_committed" in summary:
+        click.echo(
+            f"  Data repo committed: {'yes' if summary['data_committed'] else 'no (not a git repo or nothing to commit)'}"
+        )
+    if summary.get("auto_commit_current"):
+        click.echo(
+            "  Note: auto_commit is currently ON in this config. With the v6 "
+            "skill changes, hivemind/ updates should ride along with your "
+            "code commits instead. Consider:  hv config set auto_commit false"
+        )
+
+
 def _detect_current_version(data_path: Path) -> str | None:
     config_path = data_path / ".hivemind.json"
     if not config_path.exists():
@@ -1096,6 +1285,8 @@ def _detect_current_version(data_path: Path) -> str | None:
                 return "v5"
             if version == SCHEMA_V5_1:
                 return "v5.1"
+            if version == SCHEMA_V6:
+                return "v6"
         return "v3"
     except Exception:
         return None
@@ -1105,7 +1296,7 @@ def _detect_current_version(data_path: Path) -> str | None:
 @click.option(
     "--to",
     "target",
-    type=click.Choice(["v2", "v3", "v3.1", "v4", "v5", "v5.1"]),
+    type=click.Choice(["v2", "v3", "v3.1", "v4", "v5", "v5.1", "v6"]),
     default=None,
     help="Target schema version (prompts if omitted).",
 )
@@ -1149,7 +1340,7 @@ def migrate_cmd(
 
     if target is None:
         current = _detect_current_version(data_path)
-        choices = ["v2", "v3", "v3.1", "v4", "v5", "v5.1"]
+        choices = ["v2", "v3", "v3.1", "v4", "v5", "v5.1", "v6"]
         if current == "v1":
             default = "v2"
         elif current == "v2":
@@ -1160,8 +1351,10 @@ def migrate_cmd(
             default = "v5"
         elif current == "v5":
             default = "v5.1"
+        elif current == "v5.1":
+            default = "v6"
         else:
-            default = "v5.1"
+            default = "v6"
 
         target = questionary.select(
             "Select target version",
@@ -1224,6 +1417,19 @@ def migrate_cmd(
             data_path, only_projects=only, commit=not no_commit
         )
         print_v5_1_migration_summary(summary)
+        return
+
+    if target == "v6":
+        only = None
+        if projects:
+            only = [
+                Path(p).expanduser().name if "/" in p or "\\" in p else p
+                for p in projects
+            ]
+        summary = migrate_v5_to_v6(
+            data_path, only_projects=only, commit=not no_commit
+        )
+        print_v6_migration_summary(summary)
         return
 
     # target == "v3"

@@ -640,7 +640,7 @@ class TestConfigFlow:
             result = _invoke(["config"], cwd=data_path)
             assert result.exit_code == 0
             parsed = json.loads(result.output)
-            assert parsed["version"] == "5.0.0"
+            assert parsed["version"] == "6.0.0"
             assert "profiles" in parsed
 
 

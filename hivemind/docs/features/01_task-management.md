@@ -7,11 +7,11 @@ Hierarchical task tracking system with YAML frontmatter files. Supports epic -> 
 ## Commands
 
 ### `hv task create -p PROJECT -t TITLE [--type TYPE] [--priority PRIORITY] [--parent PARENT] [--depends DEP1 --depends DEP2]`
-- Generates sequential task ID: `{PREFIX}-{NNN}` (e.g., `AGE-001`)
+- Generates sequential task ID: `{PREFIX}-{NNN}-{hash}` (e.g., `AGE-001-abc1`)
 - Validates parent hierarchy rules
-- Creates Markdown file at `tasks/{project}/{TASK_ID}.md`
-- Updates counter in `.hivemind.json`
-- Auto-commits if enabled
+- Creates Markdown file at `<linked>/hivemind/tasks/active/{TASK_ID}.md`
+- Updates `_index.json` (v2) with the file's relative path
+- Auto-commits only if `auto_commit=true` (default `false`)
 
 ### `hv task list [-p PROJECT] [-s STATUS] [--priority PRIORITY] [--flat]`
 - Default: tree view with box-drawing characters (unicode `├─`, `└─`, `│`)
@@ -24,8 +24,15 @@ Hierarchical task tracking system with YAML frontmatter files. Supports epic -> 
 
 ### `hv task update TASK_ID [--status STATUS] [--priority PRIORITY] [--title TITLE]`
 - Updates specific frontmatter fields
-- When status changes to `done`: triggers auto-completion of parent tasks
-- Auto-commits if enabled
+- **Moves the file across the lifecycle boundary** when status crosses `done`/`cancelled` ↔ open: e.g., `pending → done` relocates `active/<id>.md → done/<id>.md` and refreshes `_index.json.path`. Tasks under `archive/{YYYY-MM}/` are pulled back to `active/` or `done/` on any status change (archive is meant as a snapshot — mutating implies the user wants the task back in circulation).
+- When status changes to a terminal value: triggers auto-completion of parent tasks (and moves the parent file too)
+- Auto-commits only if `auto_commit=true` (default `false`) — the orchestrator is expected to bundle the move into a single user-facing commit
+
+### `hv task archive [-p PROJECT] [--older-than 14d] [--all] [--dry-run]`
+- Moves `done/<id>.md` entries whose `completed_at` (or `updated`) is older than the threshold into `archive/{YYYY-MM}/<id>.md`
+- `--all` overrides the age threshold; `--dry-run` previews the move set without touching the filesystem
+- Updates `_index.json.path` so lookups stay O(1)
+- Idempotent — re-running on an already-archived layout is a no-op
 
 ### `hv task next [-p PROJECT]`
 - Returns the highest-priority pending leaf task (task/bug/chore only)

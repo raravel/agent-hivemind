@@ -351,6 +351,14 @@ Use `hv task body-append <id>` to extend a body and `hv task criteria-add <id> "
 
 3. **Wire dependencies** — Use `--depends` for tasks that require previous tasks to be done first
 4. **Present the full plan** — List all tasks with their IDs, dependencies, and priorities at the end
+5. **Commit the plan as one git commit.** `hv task create` writes `.md` files under `hivemind/tasks/active/` and refreshes `hivemind/tasks/_index.json` — but `auto_commit` is OFF by default, so nothing lands in git yet. After every task in the plan is created, stage the new files and any harness doc updates (`hivemind/docs/...`) and commit them as a single user-facing commit:
+
+   ```bash
+   git -C <project_root> add hivemind/
+   git -C <project_root> commit -m "plan: <short-summary>"
+   ```
+
+   This keeps `git log` to one line per plan instead of one line per task created.
 
 ## Managing existing tasks
 

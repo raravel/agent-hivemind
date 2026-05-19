@@ -310,20 +310,30 @@ If every binding returned `harness-duplicate`, log: `harness sync: idempotent �
 
 ### 12. Merge worker branch + mark done + cleanup worktree
 
-Merge the worker's branch into the main branch of the project repo (single worktree merge for sequential; one-at-a-time for parallel):
+Merge, mark done, and commit code + hivemind state as a SINGLE git commit.
+
+The default ``auto_commit`` is OFF, so ``hv task update`` and ``hv feedback save`` only mutate files — the orchestrator is responsible for landing those mutations together with the code change in one tidy commit. This keeps ``git log`` free of ``task: update …`` / ``task: criteria-check …`` noise while preserving the task-state ledger inside each user-facing commit.
 
 ```bash
+# 1. Squash-merge the worker branch but DON'T commit yet — code is staged.
 git -C <project_root> merge <worker-branch> --squash --no-commit
-git -C <project_root> status
-# Orchestrator reviews staged changes, then commits
+
+# 2. Mark the task done. Because auto_commit is OFF by default, this moves
+#    hivemind/tasks/active/<id>.md to hivemind/tasks/done/<id>.md and
+#    updates _index.json — without creating a separate git commit.
+hv task update <TASK-ID> --status done
+
+# 3. Stage the hivemind/ changes (task status move, report from step 13,
+#    any harness-sync features/tech-stack updates from step 11.5).
+git -C <project_root> add hivemind/
+
+# 4. Single commit bundling code + hivemind state.
 git -C <project_root> commit -m "task: <TASK-ID> <title>"
 ```
 
-Then mark the task done:
+Why this matters: a project running with auto_commit=true would generate one commit per `hv task update`, one per `hv feedback save`, and one per criteria toggle — drowning the real "task: <TASK-ID>" commit in clerical noise. Bundling everything into the user-facing commit gives `git log` one line per unit of work.
 
-```bash
-hv task update <TASK-ID> --status done
-```
+**Exception — lesson saves stay as separate commits.** Step 15 invokes `hv feedback save`, which deliberately creates an isolated `[lesson:<TASK-ID>]` commit that the time-delayed rollback gate (step 15.5) can revert independently. Don't fold those into the task commit.
 
 **Cleanup the worker's worktree and branch (MANDATORY on successful merge).** Long-running pipelines otherwise accumulate dozens of dangling worktrees:
 
@@ -543,3 +553,5 @@ Record incident in report, proceed to next task (do NOT stop the pipeline).
 - **NEVER skip step 11.5** for normal tasks. Skip-condition (no unlisted files AND no manifest change) is fine; explicit skip is not.
 - **NEVER edit a feature's contract via task code.** The contract-drift guard blocks removed/renamed identifiers found in specs; the resolution is `/hv:plan`, not silent code change.
 - **ALWAYS** use `hv feedback draft-add --auto-promote` (target features or target tech-stack with `--section "Active Dependencies"`) for binding sync. Do not write to harness docs directly.
+- **ALWAYS** bundle hivemind/ mutations (task status moves, reports, harness sync) into the same git commit as the code change for that task. In step 12, run `git add hivemind/` BEFORE `git commit`. Lesson saves from step 15 are the documented exception — they ride their own commit.
+- **NEVER** rely on `auto_commit=true` to record task state. Since v6 the default is OFF and stays OFF: the orchestrator does the bundling so user `git log` shows one commit per task, not a clerical trail.

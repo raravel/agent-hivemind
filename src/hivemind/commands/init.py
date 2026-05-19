@@ -178,6 +178,11 @@ def _print_installer_summary(summary: dict[str, object]) -> None:
 def _init_git(data_path: Path, config_path: Path) -> bool:
     """Run ``git init`` in *data_path* and enable git in config.
 
+    Only sets ``git_enabled``. ``auto_commit`` stays at its default
+    (``False``) — task/state mutations don't auto-create commits that
+    would mix into the user's code history. Users who want eager commits
+    opt in explicitly with ``hv config set auto_commit true``.
+
     Returns True if git was initialized successfully.
     """
     try:
@@ -193,7 +198,6 @@ def _init_git(data_path: Path, config_path: Path) -> bool:
 
     cfg = HivemindConfig.load(config_path)
     cfg.set("git_enabled", True)
-    cfg.set("auto_commit", True)
     cfg.save()
     return True
 

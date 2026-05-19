@@ -13,6 +13,7 @@ not depend on :class:`HivemindConfig`.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -60,6 +61,52 @@ def harness_meta_dir(linked_path: Path | str) -> Path:
 def task_dir(linked_path: Path | str) -> Path:
     """Return ``<linked_path>/hivemind/tasks`` — task files for the project."""
     return project_hivemind_dir(linked_path) / "tasks"
+
+
+def active_dir(tasks_dir: Path | str) -> Path:
+    """Return ``<tasks_dir>/active`` — pending/in_progress/in_review/rejected tasks."""
+    return Path(tasks_dir) / "active"
+
+
+def done_dir(tasks_dir: Path | str) -> Path:
+    """Return ``<tasks_dir>/done`` — recently completed tasks awaiting archive."""
+    return Path(tasks_dir) / "done"
+
+
+def archive_dir(
+    tasks_dir: Path | str, yyyy_mm: str | None = None
+) -> Path:
+    """Return ``<tasks_dir>/archive`` or ``<tasks_dir>/archive/{YYYY-MM}``.
+
+    Pass *yyyy_mm* (e.g. ``"2026-05"``) to address a specific month bucket;
+    omit it to address the archive root.
+    """
+    base = Path(tasks_dir) / "archive"
+    return base / yyyy_mm if yyyy_mm else base
+
+
+def iter_task_dirs(tasks_dir: Path | str) -> Iterator[Path]:
+    """Yield every directory that may contain task .md files.
+
+    Yields ``active/``, ``done/``, and each ``archive/{YYYY-MM}/`` that
+    exists, in that order. Falls back to *tasks_dir* itself when the v6
+    subdirectories do not yet exist (pre-migration projects) so callers can
+    still resolve flat-layout tasks.
+    """
+    base = Path(tasks_dir)
+    saw_any = False
+    for sub in (base / "active", base / "done"):
+        if sub.is_dir():
+            saw_any = True
+            yield sub
+    archive = base / "archive"
+    if archive.is_dir():
+        for entry in sorted(archive.iterdir()):
+            if entry.is_dir():
+                saw_any = True
+                yield entry
+    if not saw_any and base.is_dir():
+        yield base
 
 
 def harness_scores_path(linked_path: Path | str) -> Path:

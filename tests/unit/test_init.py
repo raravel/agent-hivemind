@@ -218,7 +218,11 @@ class TestInitGit:
 
         cfg = HivemindConfig.load(config_path)
         assert cfg.get("git_enabled") is True
-        assert cfg.get("auto_commit") is True
+        # v6: _init_git no longer forces auto_commit on. The default stays
+        # False so hivemind/ mutations don't write noise commits into the
+        # user's project repo; users opt in explicitly via
+        # ``hv config set auto_commit true``.
+        assert cfg.get("auto_commit") is False
 
     def test_git_init_handles_missing_git(self, tmp_path: Path) -> None:
         data = tmp_path / "data"
