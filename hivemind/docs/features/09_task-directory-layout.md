@@ -45,7 +45,8 @@ hivemind/tasks/
 | `done`, `cancelled`                                   | `done/`   |
 | (only via `hv task archive`)                          | `archive/{YYYY-MM}/` |
 
-`hv task archive --older-than 14d` (default 14 days) moves stale
+`hv task archive --older-than 30d` (default 30 days, i.e. roughly one
+month) moves stale
 `done/` entries into the monthly bucket derived from `completed_at` (or
 `updated`). The archive command is the *only* path into `archive/` —
 status mutations on an archived task restore it to `active/` or `done/`

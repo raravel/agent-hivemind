@@ -1327,7 +1327,7 @@ def next_cmd(project: str | None) -> None:
 
 
 def _parse_age_spec(spec: str) -> timedelta:
-    """Parse an age spec like ``'14d'``, ``'24h'``, or a bare integer (days).
+    """Parse an age spec like ``'30d'``, ``'24h'``, or a bare integer (days).
 
     Raises :class:`ValueError` on bad input; the CLI wraps it into a
     user-facing :class:`click.ClickException`.
@@ -1364,9 +1364,9 @@ def _bucket_dt_for(fm: dict[str, object], fallback: datetime) -> datetime:
 @click.option(
     "--older-than",
     "older_than",
-    default="14d",
+    default="30d",
     show_default=True,
-    help="Age threshold: '14d', '24h', or a bare integer (days).",
+    help="Age threshold: '30d', '24h', or a bare integer (days).",
 )
 @click.option(
     "--all",

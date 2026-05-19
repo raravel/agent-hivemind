@@ -28,7 +28,7 @@ Hierarchical task tracking system with YAML frontmatter files. Supports epic -> 
 - When status changes to a terminal value: triggers auto-completion of parent tasks (and moves the parent file too)
 - Auto-commits only if `auto_commit=true` (default `false`) — the orchestrator is expected to bundle the move into a single user-facing commit
 
-### `hv task archive [-p PROJECT] [--older-than 14d] [--all] [--dry-run]`
+### `hv task archive [-p PROJECT] [--older-than 30d] [--all] [--dry-run]`
 - Moves `done/<id>.md` entries whose `completed_at` (or `updated`) is older than the threshold into `archive/{YYYY-MM}/<id>.md`
 - `--all` overrides the age threshold; `--dry-run` previews the move set without touching the filesystem
 - Updates `_index.json.path` so lookups stay O(1)

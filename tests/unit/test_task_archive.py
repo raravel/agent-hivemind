@@ -73,7 +73,7 @@ def _invoke(data_path: Path, args: list[str]) -> Any:
 
 class TestArchiveAge:
     def test_skips_recently_done(self, tmp_path: Path) -> None:
-        """Default ``--older-than 14d`` leaves freshly-done tasks alone."""
+        """Default ``--older-than 30d`` leaves freshly-done tasks alone."""
         data_path, proj_path = _make_workspace(tmp_path)
         _seed_done_task(
             proj_path, "P-001-fresh", completed_at=datetime.now()
