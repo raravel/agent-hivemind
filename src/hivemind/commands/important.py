@@ -38,11 +38,17 @@ def _scan_promoted(data_path: Path) -> list[dict[str, Any]]:
 
         if post.metadata.get("promoted") is True:
             rel_path = str(md_file.relative_to(data_path))
+            hits_raw = post.metadata.get("hits", 0)
+            hits = (
+                int(hits_raw)
+                if isinstance(hits_raw, (int, float, str))
+                else 0
+            )
             promoted.append(
                 {
                     "title": str(post.metadata.get("title", md_file.stem)),
                     "path": rel_path,
-                    "hits": int(post.metadata.get("hits", 0)),
+                    "hits": hits,
                     "body": post.content,
                 }
             )

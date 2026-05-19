@@ -121,5 +121,10 @@ def create_task_file(
     """
     validate_task_frontmatter(fm)
     path.parent.mkdir(parents=True, exist_ok=True)
-    post = frontmatter.Post(body, **fm)
+    # Build the Post without ``**fm`` — mypy's strict mode reads the
+    # second positional/keyword as ``handler: BaseHandler | None`` and
+    # rejects ``dict[str, object]`` splat. Setting metadata directly
+    # achieves the same on-disk result.
+    post = frontmatter.Post(body)
+    post.metadata.update(fm)
     path.write_text(frontmatter.dumps(post), encoding="utf-8")

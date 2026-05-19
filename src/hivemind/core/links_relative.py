@@ -22,6 +22,7 @@ write the returned string back to disk.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import PurePosixPath
 
 __all__ = ["rewrite_body"]
@@ -65,7 +66,7 @@ def _relative_to_docs(
 
 def _build_path_rewriter(
     rel_from_hivemind: PurePosixPath, project: str
-) -> tuple[re.Pattern[str], object]:
+) -> tuple[re.Pattern[str], Callable[[re.Match[str]], str]]:
     """Return (compiled regex, sub-function) that rewrites backtick paths.
 
     Matches three flavours of legacy reference, all inside single backticks:
