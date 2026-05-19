@@ -1,8 +1,10 @@
-# Harness Quality Rubric (v2)
+# Harness Quality Rubric (v3)
 
 Each axis scores 0–10. Use the anchor levels below. Interpolate when between anchors; round to the nearest integer.
 
 **Bump `RUBRIC_VERSION` in `core/harness_quality.py` when any anchor below changes** — older scores must not be compared to new ones.
+
+**Multi-option phrasing cap (v3 addition, applies to every axis):** A harness must commit to one path. If the file an axis evaluates contains banned multi-option phrasings — case-insensitive matches for `Option A`, `Option B`, ` either ... or `, `alternatively`, `could use`, `TBD — choose`, `pick later`, or list-style "pros and cons of each" tables — **cap that axis's final score at 5** and cite the offending phrase in `rationale`. The exception is a one-line footnote of the form `> Decision: see [[decisions/<slug>]]`, which is a pointer, not a fork.
 
 ---
 
@@ -99,6 +101,22 @@ Stages to recognize (by keywords in command):
 Favor language-agnostic phrasing: hard-coded `ruff/mypy/pytest` in a polyglot project is a minor deduction (-1), since the project's actual stack may differ.
 
 **Justification specificity (v2 addition):** a vague justification such as "we don't need that" or "N/A" does NOT count toward anchor 10. The justification must name the absent stage explicitly and give a reason tied to the project's actual scope (e.g. "no `type` stage — repository is plain Python without type hints in source").
+
+---
+
+## 6. `decisiveness` — single-path commitment (v3 addition)
+
+Scans every harness file (`architecture.md`, `tech-stack.md`, `rules.md`, `verify.md`, `features/*.md`) for banned multi-option phrasings (see the cap rule at the top). Decision-log entries under `hivemind/docs/decisions/` are exempt — that directory is precisely where alternatives live. A one-line footnote `> Decision: see [[decisions/<slug>]]` is a pointer and does not count as a fork.
+
+| Score | Anchor |
+|-------|--------|
+| 0 | ≥ 3 distinct files contain banned phrasings, OR a single file contains ≥ 3 banned phrasings. |
+| 3 | 2 banned phrasings in total across the harness. |
+| 5 | Exactly 1 banned phrasing in total. |
+| 7 | 0 banned phrasings; no `decisions/` directory yet, but the project is small enough that no forks have been hit. |
+| 10 | 0 banned phrasings AND `decisions/` directory exists with ≥ 1 ADR entry, OR a `rationale` field explicitly attests "no decision points encountered" with an example of where one would have gone. |
+
+Penalize a `decisions/` entry that itself contains banned phrasings *outside* its `## Considered` section — the considered list is allowed to enumerate options, but the `## Chosen`/`## Rationale` sections must be single-path.
 
 ---
 

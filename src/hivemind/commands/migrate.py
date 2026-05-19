@@ -665,6 +665,7 @@ def print_completed_at_migration_summary(summary: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 SCHEMA_V5 = "5.0.0"
+SCHEMA_V5_1 = "5.1.0"
 
 
 def _is_git_repo(path: Path) -> bool:
@@ -913,6 +914,165 @@ def print_v5_migration_summary(summary: dict[str, Any]) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# v5 -> v5.1: rewrite legacy spec-reference paths to file-relative + wikilinks
+# ---------------------------------------------------------------------------
+
+
+def _rewrite_file_links(
+    file_path: Path,
+    *,
+    rel_from_hivemind: str,
+    project: str,
+) -> bool:
+    """Rewrite *file_path* in place. Returns True if content changed."""
+    from hivemind.core.links_relative import rewrite_body
+
+    try:
+        original = file_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    new, changes = rewrite_body(
+        original,
+        rel_from_hivemind=rel_from_hivemind,
+        project=project,
+    )
+    if changes == 0 or new == original:
+        return False
+    file_path.write_text(new, encoding="utf-8")
+    return True
+
+
+def migrate_v5_to_v5_1(
+    data_path: Path,
+    only_projects: list[str] | None = None,
+    *,
+    commit: bool = True,
+) -> dict[str, Any]:
+    """Rewrite task/doc bodies so spec references are file-relative + wikilinked.
+
+    Walks every registered project's ``hivemind/tasks/**/*.md`` and
+    ``hivemind/docs/**/*.md``, replaces legacy ``projects/<project>/...``
+    and ``hivemind/docs/...`` backtick paths with file-relative forms
+    (``../docs/...``), and prepends Obsidian wikilinks inside each task's
+    ``## Spec References`` section.
+
+    Idempotent — re-running on already-rewritten content is a no-op. The
+    schema version is bumped to 5.1.0 only when no project filter is
+    active.
+    """
+    summary: dict[str, Any] = {
+        "projects": [],
+        "skipped": [],
+        "version_updated": False,
+    }
+
+    config_path = data_path / ".hivemind.json"
+    if not config_path.exists():
+        return summary
+
+    try:
+        with config_path.open("r", encoding="utf-8") as f:
+            cfg_data: dict[str, Any] = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return summary
+
+    projects = cfg_data.get("projects") or {}
+    if not isinstance(projects, dict):
+        projects = {}
+
+    only = set(only_projects) if only_projects else None
+
+    for name, proj in projects.items():
+        if only is not None and name not in only:
+            continue
+        if not isinstance(proj, dict):
+            continue
+        linked_raw = proj.get("linked_path")
+        if not isinstance(linked_raw, str) or not linked_raw:
+            summary["skipped"].append({"project": name, "reason": "no linked_path"})
+            continue
+        linked = Path(linked_raw).expanduser()
+        if not linked.exists():
+            summary["skipped"].append(
+                {"project": name, "reason": f"linked_path missing: {linked}"}
+            )
+            continue
+
+        hivemind_dir = linked / "hivemind"
+        if not hivemind_dir.exists():
+            summary["skipped"].append(
+                {"project": name, "reason": "no hivemind/ dir (not migrated to v5 yet)"}
+            )
+            continue
+
+        changed_files: list[str] = []
+        for md_path in sorted(hivemind_dir.rglob("*.md")):
+            if not md_path.is_file():
+                continue
+            try:
+                rel = md_path.relative_to(hivemind_dir).as_posix()
+            except ValueError:
+                continue
+            # Restrict to tasks/ (incl. _reports) and docs/ subtrees.
+            top = rel.split("/", 1)[0]
+            if top not in ("tasks", "docs"):
+                continue
+            if _rewrite_file_links(md_path, rel_from_hivemind=rel, project=name):
+                changed_files.append(rel)
+
+        project_summary: dict[str, Any] = {
+            "project": name,
+            "linked_path": str(linked),
+            "files_changed": len(changed_files),
+            "changed_files": changed_files,
+        }
+
+        if commit and changed_files:
+            from hivemind.core.git import auto_commit
+
+            project_summary["committed"] = auto_commit(
+                linked,
+                "chore(hivemind): rewrite task spec links to relative form",
+                force=True,
+            )
+
+        summary["projects"].append(project_summary)
+
+    if only is None and cfg_data.get("version") != SCHEMA_V5_1:
+        cfg_data["version"] = SCHEMA_V5_1
+        config_path.write_text(
+            json.dumps(cfg_data, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        summary["version_updated"] = True
+
+    return summary
+
+
+def print_v5_1_migration_summary(summary: dict[str, Any]) -> None:
+    click.echo("Migration summary (v5 -> v5.1):")
+    projects = summary.get("projects") or []
+    if not projects:
+        click.echo("  No projects to migrate.")
+    for p in projects:
+        click.echo(f"  - {p['project']}: {p.get('files_changed', 0)} file(s) rewritten")
+        if "committed" in p:
+            click.echo(
+                f"      committed: {'yes' if p['committed'] else 'no (not a git repo or nothing to commit)'}"
+            )
+        # Show first few changed paths for quick verification.
+        for rel in (p.get("changed_files") or [])[:5]:
+            click.echo(f"        {rel}")
+        remaining = max(0, len(p.get("changed_files") or []) - 5)
+        if remaining:
+            click.echo(f"        ... and {remaining} more")
+    for s in summary.get("skipped", []) or []:
+        click.echo(f"  - SKIP {s['project']}: {s['reason']}")
+    if summary.get("version_updated"):
+        click.echo(f"  Schema version bumped to {SCHEMA_V5_1}.")
+
+
 def _detect_current_version(data_path: Path) -> str | None:
     config_path = data_path / ".hivemind.json"
     if not config_path.exists():
@@ -934,6 +1094,8 @@ def _detect_current_version(data_path: Path) -> str | None:
                 return "v4"
             if version == SCHEMA_V5:
                 return "v5"
+            if version == SCHEMA_V5_1:
+                return "v5.1"
         return "v3"
     except Exception:
         return None
@@ -943,7 +1105,7 @@ def _detect_current_version(data_path: Path) -> str | None:
 @click.option(
     "--to",
     "target",
-    type=click.Choice(["v2", "v3", "v3.1", "v4", "v5"]),
+    type=click.Choice(["v2", "v3", "v3.1", "v4", "v5", "v5.1"]),
     default=None,
     help="Target schema version (prompts if omitted).",
 )
@@ -987,7 +1149,7 @@ def migrate_cmd(
 
     if target is None:
         current = _detect_current_version(data_path)
-        choices = ["v2", "v3", "v3.1", "v4", "v5"]
+        choices = ["v2", "v3", "v3.1", "v4", "v5", "v5.1"]
         if current == "v1":
             default = "v2"
         elif current == "v2":
@@ -996,8 +1158,10 @@ def migrate_cmd(
             default = "v4"
         elif current == "v4":
             default = "v5"
+        elif current == "v5":
+            default = "v5.1"
         else:
-            default = "v5"
+            default = "v5.1"
 
         target = questionary.select(
             "Select target version",
@@ -1047,6 +1211,19 @@ def migrate_cmd(
             data_path, only_projects=only, commit=not no_commit
         )
         print_v5_migration_summary(summary)
+        return
+
+    if target == "v5.1":
+        only = None
+        if projects:
+            only = [
+                Path(p).expanduser().name if "/" in p or "\\" in p else p
+                for p in projects
+            ]
+        summary = migrate_v5_to_v5_1(
+            data_path, only_projects=only, commit=not no_commit
+        )
+        print_v5_1_migration_summary(summary)
         return
 
     # target == "v3"

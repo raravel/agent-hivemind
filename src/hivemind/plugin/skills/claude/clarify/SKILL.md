@@ -129,3 +129,4 @@ When scoring the Done axis:
 - When context makes an axis self-evident (e.g., the codebase is a Python project so "How" is obvious), score it low and move on. Do not ask unnecessary questions.
 - Minimize round-trips: batch questions for multiple axes in a single message.
 - If the user explicitly says "just do it" or "skip clarification", respect their choice but warn them once about potential ambiguity.
+- If a fork arises *during planning* (after clarify has passed), defer to `/hv:plan`'s Decision Point Escalation Protocol — clarify covers request-entry ambiguity; DPEP covers spec-drafting ambiguity. Do not re-enter clarify mid-plan.

@@ -265,7 +265,7 @@ Worker retry: max **1** (the worker can revert the contract change — they cann
 
 **File-path binding.** For each unlisted non-test source file in `changed_files`:
 
-1. Determine which feature to bind it under by reading the task body's `## Spec References`. These reference one or more `projects/{project}/features/00_<slug>.md`. Use the slug from the most specific reference; if multiple references apply, choose the feature whose body text mentions the file's directory most often.
+1. Determine which feature to bind it under by reading the task body's `## Spec References`. These reference one or more `../docs/features/00_<slug>.md` (often prefixed by an Obsidian wikilink `[[features/00_<slug>|00_<slug>]]`; legacy bodies may still use `projects/{project}/features/...` until `hv migrate --to v5.1` has run). Use the slug from the most specific reference; if multiple references apply, choose the feature whose body text mentions the file's directory most often.
 
 2. Append:
 
@@ -308,7 +308,7 @@ Re-read each touched harness doc to confirm appends took. Record outcomes in the
 
 If every binding returned `harness-duplicate`, log: `harness sync: idempotent — already in sync`.
 
-### 12. Merge worker branch + mark done
+### 12. Merge worker branch + mark done + cleanup worktree
 
 Merge the worker's branch into the main branch of the project repo (single worktree merge for sequential; one-at-a-time for parallel):
 
@@ -319,11 +319,21 @@ git -C <project_root> status
 git -C <project_root> commit -m "task: <TASK-ID> <title>"
 ```
 
-Then:
+Then mark the task done:
 
 ```bash
 hv task update <TASK-ID> --status done
 ```
+
+**Cleanup the worker's worktree and branch (MANDATORY on successful merge).** Long-running pipelines otherwise accumulate dozens of dangling worktrees:
+
+```bash
+git -C <project_root> worktree remove <worktree-path>
+git -C <project_root> branch -D <worker-branch>
+git -C <project_root> worktree prune
+```
+
+If `worktree remove` fails (e.g., dirty state — which should not happen after a clean squash-merge), STOP cleanup, log the path in the report's `## Notes`, and leave both the worktree and branch for the user to inspect. Do NOT `--force` remove.
 
 Only proceed to step 12 after ALL of:
 - Every completion criterion marked [PASS]
@@ -502,6 +512,16 @@ hv task update <TASK-ID> --status blocked --reason "<what failed and why>"
 ```
 Record incident in report, proceed to next task (do NOT stop the pipeline).
 
+**Preserve the worktree AND worker branch on block.** Do NOT run `git worktree remove` or `git branch -D` for blocked tasks — the user inspects the worker's state to diagnose the failure. Record both locations in the report so the user can find them:
+
+```markdown
+## Incident
+...
+### Preserved artifacts
+- worktree: <worktree-path>
+- branch:   <worker-branch>
+```
+
 ## Important Rules
 
 - **NEVER trust a worker's completion claim.** Verify yourself.
@@ -511,6 +531,8 @@ Record incident in report, proceed to next task (do NOT stop the pipeline).
 - **NEVER spawn workers without `isolation: "worktree"`.**
 - **NEVER auto-accept a review.** Apply the 4-axis rubric and blocking thresholds.
 - **NEVER let a worker mark a task as done.** Only you do this, and only after merge.
+- **ALWAYS** run `git worktree remove <path>` + `git branch -D <worker-branch>` after a successful merge in step 12. Worktrees and worker branches must NOT accumulate across runs.
+- **NEVER** remove a worktree or delete a worker branch for a `blocked` task. Preservation is required so the user can diagnose the failure.
 - **ALWAYS** use `hv run --format json` (sequential) or `hv run --ready-only --limit N` (parallel) for structured task data.
 - **ALWAYS** mark task `in_progress` before starting work.
 - **ALWAYS** use the model IDs from `hv config profiles.<profile> --target codex`. Do NOT hardcode.

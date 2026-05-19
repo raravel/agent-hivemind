@@ -56,7 +56,7 @@ updated: 2025-01-15
 What this task implements and why.
 
 ## Spec References
-- `projects/agent-hivemind/architecture.md`
+- [[architecture]] `../architecture.md`
 
 ## Completion Criteria
 - [ ] BM25 search returns ranked results

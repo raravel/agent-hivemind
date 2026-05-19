@@ -1136,7 +1136,9 @@ class TestSaveAppendsLessonLog:
         log_path = lesson_log_path(tmp_path)
         assert log_path.exists()
         lines = [
-            json.loads(l) for l in log_path.read_text(encoding="utf-8").splitlines() if l
+            json.loads(line)
+            for line in log_path.read_text(encoding="utf-8").splitlines()
+            if line
         ]
         assert len(lines) == 1
         assert lines[0]["task_id"] == "DM-100"

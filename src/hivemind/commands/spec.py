@@ -41,18 +41,20 @@ def _resolve_project(project: str | None) -> tuple[Path, str]:
         raise click.ClickException(str(exc)) from exc
 
 
-def _next_feature_path(features_dir: Path, slug: str) -> Path:
-    """Return ``features/NN_<slug>.md``, auto-numbering NN.
+def _next_numbered_path(parent_dir: Path, slug: str) -> Path:
+    """Return ``<parent_dir>/NN_<slug>.md``, auto-numbering NN.
 
     If a file containing the same slug already exists, overwrite it
     (keeping its number). Otherwise pick ``(max existing NN) + 1``.
+
+    Used by both ``features/<slug>`` and ``decisions/<slug>`` namespaces.
     """
     slug_norm = slug.strip().lower().replace(" ", "-")
     if not slug_norm:
-        raise click.ClickException("Empty feature slug.")
+        raise click.ClickException("Empty slug.")
 
-    features_dir.mkdir(parents=True, exist_ok=True)
-    existing = sorted(features_dir.glob("*.md"))
+    parent_dir.mkdir(parents=True, exist_ok=True)
+    existing = sorted(parent_dir.glob("*.md"))
 
     for path in existing:
         if slug_norm in path.stem.lower():
@@ -65,7 +67,7 @@ def _next_feature_path(features_dir: Path, slug: str) -> Path:
             n = int(head)
             if n > max_n:
                 max_n = n
-    return features_dir / f"{max_n + 1:02d}_{slug_norm}.md"
+    return parent_dir / f"{max_n + 1:02d}_{slug_norm}.md"
 
 
 def _resolve_spec_path(linked_path: Path, name: str) -> Path:
@@ -77,13 +79,20 @@ def _resolve_spec_path(linked_path: Path, name: str) -> Path:
       - ``tech-stack``, ``tech_stack``, ``tech-stack.md``
       - ``verify``, ``verify.md``
       - ``features/<slug>`` — auto-numbered to ``features/NN_<slug>.md``
+      - ``decisions/<slug>`` — auto-numbered to ``decisions/NN_<slug>.md``
+        (decision-log entries written by /hv:plan's Decision Point
+        Escalation Protocol)
       - any other ``foo`` -> ``docs/foo.md``
     """
     docs = harness_spec_dir(linked_path)
 
     if name.startswith("features/"):
         slug = name[len("features/"):]
-        return _next_feature_path(docs / "features", slug)
+        return _next_numbered_path(docs / "features", slug)
+
+    if name.startswith("decisions/"):
+        slug = name[len("decisions/"):]
+        return _next_numbered_path(docs / "decisions", slug)
 
     # Canonical short names
     aliases = {

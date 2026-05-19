@@ -8,9 +8,11 @@ from pathlib import Path
 import pytest
 
 from hivemind.commands.migrate import (
+    SCHEMA_V5_1,
     detect_v1,
     migrate_v1_to_v2,
     migrate_v2_to_v3,
+    migrate_v5_to_v5_1,
     print_migration_summary,
 )
 from hivemind.core.config import SUPPORTED_TARGETS
@@ -863,3 +865,110 @@ class TestMigrateV5AutoCommit:
 
         assert summary["projects"][0]["committed"] is True
         assert any("migrate to v5 layout" in m for m in _git_log(linked))
+
+
+# ---------------------------------------------------------------------------
+# v5 -> v5.1
+# ---------------------------------------------------------------------------
+
+
+def _make_v5_for_links(tmp_path: Path) -> tuple[Path, Path]:
+    """Build a v5-layout project for v5.1 link-rewrite tests."""
+    data = tmp_path / "data"
+    data.mkdir()
+    linked = tmp_path / "my-project"
+    (linked / "hivemind" / "tasks" / "_reports").mkdir(parents=True)
+    (linked / "hivemind" / "docs" / "features").mkdir(parents=True)
+
+    _write_config(
+        data,
+        {
+            "version": "5.0.0",
+            "projects": {"demo": {"prefix": "DEMO", "linked_path": str(linked)}},
+        },
+    )
+
+    (linked / "hivemind" / "tasks" / "DEMO-001.md").write_text(
+        "## Spec References\n"
+        "- `projects/demo/architecture.md` — boundaries\n"
+        "- `projects/demo/features/01_auth.md` — auth\n"
+        "\n## Description\n"
+        "See `hivemind/docs/rules.md`.\n",
+        encoding="utf-8",
+    )
+    (linked / "hivemind" / "tasks" / "_reports" / "DEMO-001-report.md").write_text(
+        "Built per `projects/demo/architecture.md`.\n",
+        encoding="utf-8",
+    )
+    (linked / "hivemind" / "docs" / "features" / "01_auth.md").write_text(
+        "Refs `projects/demo/architecture.md`.\n",
+        encoding="utf-8",
+    )
+    # Untouched file outside scope.
+    (linked / "hivemind" / "reflect").mkdir()
+    (linked / "hivemind" / "reflect" / "log.md").write_text(
+        "Has `projects/demo/architecture.md` mention.\n",
+        encoding="utf-8",
+    )
+
+    return data, linked
+
+
+class TestMigrateV5ToV5_1:
+    def test_rewrites_tasks_and_docs(self, tmp_path: Path) -> None:
+        data, linked = _make_v5_for_links(tmp_path)
+
+        summary = migrate_v5_to_v5_1(data, commit=False)
+
+        task = (linked / "hivemind" / "tasks" / "DEMO-001.md").read_text(
+            encoding="utf-8"
+        )
+        assert "[[architecture]] `../docs/architecture.md`" in task
+        assert "[[features/01_auth|01_auth]] `../docs/features/01_auth.md`" in task
+        # Outside Spec References: path rewritten but no wikilink prepended.
+        assert "`../docs/rules.md`" in task
+        assert "projects/demo/" not in task
+        assert "hivemind/docs/" not in task
+
+        report = (
+            linked / "hivemind" / "tasks" / "_reports" / "DEMO-001-report.md"
+        ).read_text(encoding="utf-8")
+        assert "`../../docs/architecture.md`" in report
+
+        feature = (linked / "hivemind" / "docs" / "features" / "01_auth.md").read_text(
+            encoding="utf-8"
+        )
+        assert "`../architecture.md`" in feature
+
+        # reflect/log.md is outside scope and must be untouched.
+        reflect = (linked / "hivemind" / "reflect" / "log.md").read_text(
+            encoding="utf-8"
+        )
+        assert "projects/demo/architecture.md" in reflect
+
+        assert summary["version_updated"] is True
+        config = json.loads((data / ".hivemind.json").read_text(encoding="utf-8"))
+        assert config["version"] == SCHEMA_V5_1
+
+    def test_is_idempotent(self, tmp_path: Path) -> None:
+        data, linked = _make_v5_for_links(tmp_path)
+
+        first = migrate_v5_to_v5_1(data, commit=False)
+        before = (linked / "hivemind" / "tasks" / "DEMO-001.md").read_text(
+            encoding="utf-8"
+        )
+        second = migrate_v5_to_v5_1(data, commit=False)
+        after = (linked / "hivemind" / "tasks" / "DEMO-001.md").read_text(
+            encoding="utf-8"
+        )
+
+        assert before == after
+        assert first["projects"][0]["files_changed"] >= 1
+        assert second["projects"][0]["files_changed"] == 0
+
+    def test_filter_skips_version_bump(self, tmp_path: Path) -> None:
+        data, _linked = _make_v5_for_links(tmp_path)
+        summary = migrate_v5_to_v5_1(data, only_projects=["demo"], commit=False)
+        assert summary["version_updated"] is False
+        config = json.loads((data / ".hivemind.json").read_text(encoding="utf-8"))
+        assert config["version"] == "5.0.0"

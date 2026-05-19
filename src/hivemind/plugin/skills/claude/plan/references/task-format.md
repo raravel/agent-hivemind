@@ -42,14 +42,14 @@ Every task MUST have a markdown body with these sections:
 Brief explanation of what this task implements and why.
 
 ## Spec References
-- `projects/{project}/architecture.md` — module boundaries
-- `projects/{project}/features/01_auth.md` — authentication spec
+- [[architecture]] `../docs/architecture.md` — module boundaries
+- [[features/01_auth|01_auth]] `../docs/features/01_auth.md` — authentication spec
 
 ## Completion Criteria
 - [ ] POST /api/auth/login returns 200 with valid credentials
 - [ ] POST /api/auth/login returns 401 with invalid credentials
 - [ ] JWT token is stored in httpOnly cookie
-- [ ] All commands listed in `projects/{project}/verify.md` pass
+- [ ] All commands listed in `../docs/verify.md` pass
 ```
 
 ### Completion Criteria Rules
@@ -66,11 +66,14 @@ Always include:
 
 ### Spec References
 
-Link to harness documents that the task implementer should read:
-- `projects/{project}/architecture.md` — for module boundaries and data flow
-- `projects/{project}/tech-stack.md` — for library versions and usage patterns
-- `projects/{project}/features/*.md` — for detailed feature specs
-- `projects/{project}/verify.md` — language-agnostic verification commands (fallback: `build-verify.md` for v2 projects)
+Link to harness documents that the task implementer should read. Tasks live at `hivemind/tasks/{TASK-ID}.md`, so paths MUST be file-relative (one `..` up to the `hivemind/` namespace, then `docs/...`). Each bullet pairs an Obsidian wikilink with the backtick path so the line is clickable in Obsidian *and* resolves in code editors / GitHub.
+
+- `[[architecture]] \`../docs/architecture.md\`` — for module boundaries and data flow
+- `[[tech-stack]] \`../docs/tech-stack.md\`` — for library versions and usage patterns
+- `[[features/01_auth|01_auth]] \`../docs/features/01_auth.md\`` — for detailed feature specs
+- `[[verify]] \`../docs/verify.md\`` — language-agnostic verification commands (fallback: `build-verify.md` for v2 projects)
+
+Tasks generated before v5.1 may still carry legacy `projects/{project}/...` or root-relative `hivemind/docs/...` paths — run `hv migrate --to v5.1` once to rewrite them in place.
 
 ## Fields
 

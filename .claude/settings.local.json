@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/unit/test_spec.py -q)",
+      "Bash(python -m pytest tests/unit/test_harness_quality.py -q)",
+      "Bash(python -m ruff check src/hivemind/commands/spec.py src/hivemind/core/harness_quality.py tests/unit/test_spec.py)",
+      "Bash(python -m mypy src/hivemind/commands/spec.py src/hivemind/core/harness_quality.py)",
+      "Bash(python -m pytest tests/unit/test_spec.py tests/unit/test_harness_quality.py -q)",
+      "Bash(python -m pytest -q)"
+    ]
+  }
+}

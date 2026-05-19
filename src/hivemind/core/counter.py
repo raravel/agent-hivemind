@@ -80,15 +80,15 @@ class _CounterLock:
 
     @staticmethod
     def _acquire_posix(fd: int) -> None:
-        import fcntl
+        import fcntl  # type: ignore[import-not-found,unused-ignore]
 
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        fcntl.flock(fd, fcntl.LOCK_EX)  # type: ignore[attr-defined,unused-ignore]
 
     @staticmethod
     def _release_posix(fd: int) -> None:
-        import fcntl
+        import fcntl  # type: ignore[import-not-found,unused-ignore]
 
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        fcntl.flock(fd, fcntl.LOCK_UN)  # type: ignore[attr-defined,unused-ignore]
 
     @staticmethod
     def _acquire_windows(fd: int) -> None:

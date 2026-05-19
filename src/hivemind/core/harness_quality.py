@@ -18,7 +18,7 @@ from typing import Any
 # Bump when the rubric in score-harness/references/rubric.md changes in a
 # way that invalidates previous scores. Scores with an older rubric_version
 # are shown as "stale (rubric v%d)" and not counted as fresh.
-RUBRIC_VERSION = 2
+RUBRIC_VERSION = 3
 
 # Files considered part of the harness for hashing. Missing files are skipped
 # silently; the hash of an empty harness is still deterministic.

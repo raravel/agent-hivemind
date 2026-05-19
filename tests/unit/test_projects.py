@@ -195,7 +195,10 @@ class TestCLI:
 
     def test_errors_without_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # Push HOME so find_for_command can't fall back to a real config.
-        monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
+        # On Windows Path.home() reads USERPROFILE, not HOME, so we patch both.
+        fake_home = tmp_path / "fakehome"
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.setenv("USERPROFILE", str(fake_home))
         empty = tmp_path / "empty"
         empty.mkdir()
         runner = CliRunner()

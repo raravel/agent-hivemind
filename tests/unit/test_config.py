@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -489,6 +490,12 @@ class TestNormalizeDataPath:
         result = normalize_data_path("")
         assert result.name == "agent-hivemind-data"
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="On Windows the default data path itself contains 'C:', so the "
+        "fallback assertion is meaningless. The behavior under test is "
+        "POSIX-specific (foreign Windows path -> POSIX default).",
+    )
     def test_foreign_windows_on_posix_falls_back(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -94,6 +94,32 @@ class TestSpecWrite:
         assert result.exit_code == 0, result.output
         assert (features / "00_multi-assign.md").read_text(encoding="utf-8") == "new content\n"
 
+    def test_write_decisions_slug_auto_numbers(self, tmp_path: Path) -> None:
+        _config, linked = _setup(tmp_path)
+        result = _invoke(
+            tmp_path,
+            ["write", "decisions/cache-store", "-p", "demo"],
+            input_text="# Decision: Redis\n",
+        )
+        assert result.exit_code == 0, result.output
+        decisions = linked / "hivemind" / "docs" / "decisions"
+        files = sorted(p.name for p in decisions.glob("*.md"))
+        assert files == ["01_cache-store.md"]
+
+    def test_write_decisions_keeps_existing_number(self, tmp_path: Path) -> None:
+        _config, linked = _setup(tmp_path)
+        decisions = linked / "hivemind" / "docs" / "decisions"
+        decisions.mkdir(parents=True)
+        (decisions / "03_cache-store.md").write_text("old\n", encoding="utf-8")
+
+        result = _invoke(
+            tmp_path,
+            ["write", "decisions/cache-store", "-p", "demo"],
+            input_text="new\n",
+        )
+        assert result.exit_code == 0, result.output
+        assert (decisions / "03_cache-store.md").read_text(encoding="utf-8") == "new\n"
+
     def test_write_rejects_empty_content(self, tmp_path: Path) -> None:
         _setup(tmp_path)
         result = _invoke(

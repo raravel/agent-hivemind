@@ -70,7 +70,7 @@ def _find_config_path() -> Path | None:
     return None
 
 
-_EXPECTED_SCHEMA_VERSION = "5.0.0"
+_EXPECTED_SCHEMA_VERSION = "5.1.0"
 
 
 def _check_config() -> tuple[CheckResult, HivemindConfig | None]:

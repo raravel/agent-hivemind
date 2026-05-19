@@ -135,6 +135,57 @@ Before creating ANY tasks, write harness documents to `hivemind/docs/` in the li
 
 Research what you need (library docs, API specs, etc.) via web search BEFORE writing these documents. The documents must contain enough detail for an agent to implement each task without asking questions.
 
+#### Decision Point Escalation Protocol (DPEP) — MANDATORY
+
+The harness is the single source of truth: it must present one path, not a menu. **Never** leave multiple-choice content in `architecture.md`, `tech-stack.md`, `rules.md`, `verify.md`, `features/*.md`, or any task body. The moment a fork appears while drafting, stop and escalate.
+
+**Trigger.** Halt drafting and run DPEP when any of these arise:
+
+1. Two or more candidate libraries / patterns could satisfy the same role (Redis vs Memcached for cache, REST vs GraphQL for transport, polling vs SSE for live updates).
+2. A policy value is unstated by the user (rate-limit threshold, retention window, page size, timeout, error wording shown to end-users).
+3. Phase 0 evidence conflicts with the user's stated intent (manifest pins v3 but the conversation assumed v4).
+4. Two competing conventions coexist in the codebase and Bootstrap mode B.3 cannot decide which to canonicalize.
+5. A spec section would otherwise need the words "either", "or alternatively", "could be", "Option A/B", or "TBD — choose later".
+
+**Escalation format.** Call `AskUserQuestion` with exactly this shape (do not fall back to plain text):
+
+- `question`: one sentence, of the form `"Which X should the harness commit to?"`
+- 2–4 `options`. The recommended option goes FIRST, with the literal suffix ` (Recommended)` appended to its `label`.
+- Each option's `description` MUST be a single line in this format:
+  `Pros: <1–2 short pros>. Cons: <1–2 short cons>. Recommendation: <★★★|★★☆|★☆☆> — <one-line reason>.`
+- Use `preview` only when a diagram, schema, or code snippet meaningfully clarifies the choice. Keep previews under 12 lines.
+
+Do not write any harness file before the user answers. Do not guess. Do not "pick the obvious one" silently.
+
+**After the user answers — record the decision.** Immediately write an ADR-lite entry via the CLI (no Write/Edit on the file directly):
+
+```bash
+hv spec write decisions/<slug> -p <project> <<'EOF'
+# Decision NN: <title>
+- Date: YYYY-MM-DD
+- Status: Accepted
+- Context: <one short paragraph — what fork was hit, where in the plan>
+- Considered:
+  - <Option 1 label> — Pros: …. Cons: …. Recommendation: ★★★.
+  - <Option 2 label> — Pros: …. Cons: …. Recommendation: ★★☆.
+- Chosen: <label of the option the user picked>
+- Rationale: <user's own reason, or the recommendation reason confirmed by the user>
+- Impact: <list of harness files that will reflect this choice>
+EOF
+```
+
+`decisions/` is auto-numbered (`hivemind/docs/decisions/NN_<slug>.md`) by `hv spec write`, the same way `features/` is.
+
+**Write the harness body with the chosen path only.** The harness file must read as a single-path commitment. Reference the decision in exactly one footnote line:
+
+```markdown
+> Decision: see [[decisions/NN_<slug>]] — alternatives evaluated, not pursued.
+```
+
+The non-chosen options never appear in the harness. Their evaluation lives only in the decision file.
+
+
+
 **Write every spec via the `hv spec write` CLI** — do NOT use Write/Edit tools on these files directly. The CLI resolves the v5 location, writes atomically, and prints the resolved path on stdout. Use a heredoc to pipe content:
 
 ```bash
@@ -267,6 +318,8 @@ hv task create -p <project> -t "Update deadline API" --type task --parent <STORY
 - `story`: groups related tasks, parent must be an epic
 - `task`/`bug`/`chore`: actual work items, parent must be a story
 
+**DPEP also applies here.** Before writing a task body or completion criterion, run the same trigger check (see Phase 1). A completion criterion of the form "X works **or** Y works" is forbidden — escalate, record an ADR, then commit a single-path criterion.
+
 **After creating each task via CLI, IMMEDIATELY write the body via `hv task body-set <id>`:**
 
 ```bash
@@ -275,8 +328,8 @@ hv task body-set <TASK-ID> <<'EOF'
 What this task implements and why.
 
 ## Spec References
-- `hivemind/docs/architecture.md` — relevant section
-- `hivemind/docs/features/00_feature-name.md` — full feature spec
+- [[architecture]] `../docs/architecture.md` — relevant section
+- [[features/00_feature-name|00_feature-name]] `../docs/features/00_feature-name.md` — full feature spec
 
 ## Completion Criteria
 - [ ] Criterion 1 (concrete, verifiable)
@@ -285,6 +338,8 @@ What this task implements and why.
 - [ ] Tests pass (if applicable)
 EOF
 ```
+
+**Link format.** Task files live at `hivemind/tasks/<TASK-ID>.md`, so spec references MUST be file-relative paths (one `..` to reach the `hivemind/` namespace, then `docs/...`). Each bullet in `## Spec References` pairs an Obsidian wikilink with a backtick relative path so the same line is clickable in Obsidian and resolves in code editors. Wikilink aliases (`[[features/01_auth|01_auth]]`) keep the visible label short while disambiguating identical stems across `features/` and `decisions/`. Do NOT write legacy `projects/{project}/...` or root-relative `hivemind/docs/...` paths — both break navigation from inside a task file. `hv migrate --to v5.1` rewrites existing task bodies if older content is present.
 
 Use `hv task body-append <id>` to extend a body and `hv task criteria-add <id> "<text>"` / `hv task criteria-check <id> <n>` to manage completion criteria — never edit task `.md` files with Write/Edit.
 
@@ -340,6 +395,10 @@ See [references/task-format.md](references/task-format.md) for the frontmatter s
 - **NEVER create tasks before writing harness documents.** Phase 1 MUST complete before Phase 2.
 - **NEVER create a task without a body.** Every task must have description, spec references, and completion criteria.
 - **NEVER carry library names from a previous tech-stack.md without re-verifying** against the current manifests + artifacts (Phase 0).
+- **NEVER write multi-option content into harness files or task bodies.** Banned phrasings: `Option A/B`, `either … or …`, `alternatively`, `could use`, `TBD — choose`, `pick later`. A harness must be a single path, not a menu.
+- **NEVER pick between candidates silently.** When a fork is hit, invoke DPEP (Phase 1) — present options to the user via `AskUserQuestion` with pros/cons/recommendation and wait for their choice.
+- **ALWAYS record decisions** via `hv spec write decisions/<slug>` immediately after the user answers, before drafting the harness body that depends on the choice.
+- **ALWAYS reference a decision** from the affected harness section as a one-line footnote (`> Decision: see [[decisions/NN_<slug>]]`). The non-chosen options must not appear in the harness.
 - **ALWAYS research before writing specs.** Use web search to get accurate library APIs, configuration formats, and best practices.
 - **ALWAYS use the `hv task` / `hv spec` CLI** via Bash tool for creating, updating, and writing spec or task content. Direct Write/Edit on files under `hivemind/docs/` or `hivemind/tasks/` is forbidden.
 - **ALWAYS include a `## Implementation` section in every feature file.** Even an initial intent-only list is fine — tasks will refine it.
