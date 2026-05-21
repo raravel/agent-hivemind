@@ -114,7 +114,7 @@
       "scope": []
     },
     "AGE-006-d923": {
-      "status": "pending",
+      "status": "done",
       "priority": "medium",
       "type": "task",
       "parent": "AGE-002-141a",
@@ -122,9 +122,9 @@
         "AGE-005-07ca"
       ],
       "title": "/hv:plan SKILL: inline scope + references/scope-backfill.md",
-      "updated": "2026-05-21",
-      "completed_at": null,
-      "path": "active/AGE-006-d923.md",
+      "updated": "2026-05-22",
+      "completed_at": "2026-05-22T00:10:45.281703",
+      "path": "done/AGE-006-d923.md",
       "scope": []
     },
     "AGE-007-9ed7": {

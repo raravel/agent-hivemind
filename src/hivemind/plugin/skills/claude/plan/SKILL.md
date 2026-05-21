@@ -29,6 +29,8 @@ Decision tree:
 
    Default for (a)/(b) is (a) when the user said "plan", default is (b) when the user said "reground" / "fix tech-stack" / similar.
 
+3. **Mode (c) Scope back-fill** — User explicitly asks to "add scope to existing tasks". Full procedure in [`references/scope-backfill.md`](references/scope-backfill.md). Never run by default — opt-in only. Never speculate paths; propose `["*"]` when the honest minimum cannot be identified.
+
 ## Bootstrap mode (existing codebase, no specs yet)
 
 When `hivemind/docs/` is empty and the repo already has code, you reverse-engineer the harness from what's actually there. Do NOT create tasks in this mode — the user explicitly requests planning afterwards.
@@ -308,15 +310,19 @@ hv task create -p <project> -t "Add deadlines" --type epic --priority high
 hv task create -p <project> -t "Backend API" --type story --parent <EPIC-ID> --priority high
 hv task create -p <project> -t "Frontend UI" --type story --parent <EPIC-ID> --depends <STORY1-ID>
 
-# 3. Create tasks under each story
-hv task create -p <project> -t "Create deadline API" --type task --parent <STORY-ID> --priority high
-hv task create -p <project> -t "Update deadline API" --type task --parent <STORY-ID> --depends <PREV-TASK-ID>
+# 3. Create tasks under each story (set --scope on every leaf task)
+hv task create -p <project> -t "Create deadline API" --type task --parent <STORY-ID> \
+  --scope src/routes/deadline.py --scope manifest:python --priority high
+hv task create -p <project> -t "Update deadline API" --type task --parent <STORY-ID> \
+  --scope src/routes/deadline.py --depends <PREV-TASK-ID>
 ```
 
 **Hierarchy rules:**
 - `epic`: top-level grouping, no parent
 - `story`: groups related tasks, parent must be an epic
 - `task`/`bug`/`chore`: actual work items, parent must be a story
+
+**Scope (every new leaf task):** Set `--scope <entry>` for every file the task will write to. Entries can be path globs (`src/foo.py`, `src/**/*.py`), namespaced tags (`manifest:python`, `harness:rules`, `config:hivemind.json`), or the literal `"*"` for refactors whose write set cannot be honestly enumerated. NEVER speculate — when in doubt, use `["*"]` and accept solo execution. Empty/missing scope is treated as `["*"]` by the scheduler, so explicit is better.
 
 **DPEP also applies here.** Before writing a task body or completion criterion, run the same trigger check (see Phase 1). A completion criterion of the form "X works **or** Y works" is forbidden — escalate, record an ADR, then commit a single-path criterion.
 
@@ -410,6 +416,8 @@ See [references/task-format.md](references/task-format.md) for the frontmatter s
 - **ALWAYS research before writing specs.** Use web search to get accurate library APIs, configuration formats, and best practices.
 - **ALWAYS use the `hv task` / `hv spec` CLI** via Bash tool for creating, updating, and writing spec or task content. Direct Write/Edit on files under `hivemind/docs/` or `hivemind/tasks/` is forbidden.
 - **ALWAYS include a `## Implementation` section in every feature file.** Even an initial intent-only list is fine — tasks will refine it.
+- **ALWAYS set `--scope` on every new leaf task.** Use `["*"]` honestly when the write set cannot be enumerated — empty scope starves parallelism.
+- **NEVER write speculative paths into scope.** If the actual write set is unknown, `"*"` is the right answer.
 - NEVER create a task without a `--project` flag.
 - ALWAYS validate that the project exists (was linked via `hv link`) before creating tasks.
 - NEVER write task/spec content in Korean. All content must be in English for BM25 consistency.

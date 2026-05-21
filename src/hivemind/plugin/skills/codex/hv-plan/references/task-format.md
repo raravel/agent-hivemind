@@ -86,8 +86,13 @@ Tasks generated before v5.1 may still carry legacy `projects/{project}/...` or r
 | `type`      | string     | yes      | Task category                            |
 | `depends_on`| list[str]  | no       | IDs of tasks that must be done first     |
 | `verification_required` | bool | no | When false, `hv-task` skips the verify-first gate. Defaults to true. |
+| `scope`     | list[str]  | no (recommended on leaf tasks) | Declared write set. Path globs, `manifest:<eco>`, `harness:<area>`, `config:<name>`, or `"*"`. Drives scope-aware parallel scheduling — empty/missing forces solo. See `hivemind/docs/features/10_scope-aware-parallel.md` for matching rules and conflict semantics. |
 | `created`   | date       | yes      | ISO date of creation                     |
 | `updated`   | date       | yes      | ISO date of last update                  |
+
+## Scope as future reservation
+
+The `scope` field is a *reservation contract*: paths that don't exist yet are valid. Two tasks with disjoint scopes can run in parallel without merge conflicts. Empty scope is treated as `["*"]` (solo). Wide-scope (`["*"]`) is correct and preferred over speculation when the write set cannot be honestly enumerated at plan time.
 
 ## Task ID Format
 
