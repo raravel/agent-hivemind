@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
-import pytest
-
 from hivemind.core.links_relative import rewrite_body
 
 

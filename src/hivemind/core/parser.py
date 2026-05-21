@@ -60,6 +60,18 @@ def validate_task_frontmatter(fm: dict[str, object]) -> None:
                 f"Invalid verification_required type: expected bool, got {type(vr).__name__}"
             )
 
+    if "scope" in fm:
+        scope = fm["scope"]
+        if not isinstance(scope, list):
+            raise ValueError(
+                f"Invalid scope type: expected list[str], got {type(scope).__name__}"
+            )
+        for entry in scope:
+            if not isinstance(entry, str):
+                raise ValueError(
+                    f"Invalid scope entry type: expected str, got {type(entry).__name__}"
+                )
+
 
 def verification_required(fm: dict[str, object]) -> bool:
     """Return whether the verify-first gate applies to this task.

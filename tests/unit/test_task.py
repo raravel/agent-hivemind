@@ -616,7 +616,7 @@ class TestTaskIndex:
         tasks_dir = tmp_path / "tasks"
         tasks_dir.mkdir(parents=True)
         index_data: dict[str, Any] = {
-            "version": 2,
+            "version": 3,
             "tasks": {
                 "P-001": {
                     "status": "pending",
@@ -627,6 +627,7 @@ class TestTaskIndex:
                     "title": "Test",
                     "updated": "2025-01-01",
                     "path": "active/P-001.md",
+                    "scope": [],
                 },
             },
         }
@@ -696,8 +697,8 @@ class TestTaskIndex:
         assert id1 in index_data["tasks"]
         assert id2 in index_data["tasks"]
         assert index_data["tasks"][id1]["title"] == "First"
-        assert index_data["version"] == 2
-        # v2 records the per-task location relative to tasks_dir.
+        assert index_data["version"] == 3
+        # v2+ records the per-task location relative to tasks_dir.
         assert index_data["tasks"][id1]["path"] == f"active/{id1}.md"
         assert index_data["tasks"][id2]["path"] == f"active/{id2}.md"
 
@@ -825,7 +826,7 @@ class TestTaskIndex:
         idx_path = _tasks_dir(tmp_path) / "_index.json"
         raw = json.loads(idx_path.read_text(encoding="utf-8"))
 
-        assert raw["version"] == 2
+        assert raw["version"] == 3
         assert isinstance(raw["tasks"], dict)
 
         canonical = _task_id(tmp_path, "MP-001")
@@ -838,8 +839,10 @@ class TestTaskIndex:
         assert entry["title"] == "Schema test"
         assert "updated" in entry
         assert "completed_at" in entry
-        # v2: ``path`` field records the file's location relative to tasks_dir.
+        # v2+: ``path`` field records the file's location relative to tasks_dir.
         assert entry["path"] == f"active/{canonical}.md"
+        # v3: ``scope`` field defaults to ``[]`` when no --scope was given.
+        assert entry["scope"] == []
 
 
 class TestTaskBodyAndCriteria:

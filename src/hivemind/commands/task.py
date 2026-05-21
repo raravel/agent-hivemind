@@ -21,6 +21,7 @@ from hivemind.core.parser import (
     update_frontmatter,
     validate_status,
 )
+from hivemind.core.scope import normalize as scope_normalize
 from hivemind.core.paths import (
     active_dir,
     archive_dir,
@@ -58,11 +59,13 @@ _VALID_PARENT: dict[str, str | frozenset[str] | None] = {
 # v2 (hivemind v6): adds per-task ``path`` field — relative to tasks_dir,
 # e.g. ``"active/AGE-001-abcd1234.md"``. Lets resolution skip directory
 # scans when the index is fresh. v1 indexes are auto-rebuilt on read.
-_INDEX_VERSION: int = 2
+_INDEX_VERSION: int = 3
 
 # Frontmatter keys stored in the index. ``path`` is not a frontmatter
 # field — it tracks the file's location under tasks_dir and is supplied
-# separately to :func:`_fm_to_index_entry`.
+# separately to :func:`_fm_to_index_entry`. v3 adds ``scope`` so the
+# scope-aware packer (``run.py``) can read every candidate's declared
+# write set from a single JSON read instead of parsing N task files.
 _INDEX_FIELDS: list[str] = [
     "status",
     "priority",
@@ -73,6 +76,7 @@ _INDEX_FIELDS: list[str] = [
     "updated",
     "completed_at",
     "path",
+    "scope",
 ]
 
 
@@ -129,6 +133,10 @@ def _fm_to_index_entry(
         value = fm.get(key)
         # Normalise None / missing to a sensible default
         if key == "depends_on":
+            entry[key] = list(value) if isinstance(value, list) else []
+        elif key == "scope":
+            # Copy the list so future mutations don't alias the frontmatter
+            # object; missing/None becomes ``[]`` per the v3 schema contract.
             entry[key] = list(value) if isinstance(value, list) else []
         elif key == "parent":
             entry[key] = str(value) if value else None
@@ -739,6 +747,12 @@ def task() -> None:
 )
 @click.option("--depends", multiple=True, help="Task ID this depends on.")
 @click.option("--parent", "parent_id", default=None, help="Parent task ID.")
+@click.option(
+    "--scope",
+    "scope_entries",
+    multiple=True,
+    help="Declared write scope (path glob or namespaced tag). Repeatable.",
+)
 def create(
     project: str,
     title: str,
@@ -746,6 +760,7 @@ def create(
     priority: str,
     depends: tuple[str, ...],
     parent_id: str | None,
+    scope_entries: tuple[str, ...],
 ) -> None:
     """Create a new task."""
     cfg, _data_path = _find_config()
@@ -795,6 +810,10 @@ def create(
 
     if parent_id:
         fm["parent"] = parent_id
+
+    normalized_scope = scope_normalize(list(scope_entries))
+    if normalized_scope:
+        fm["scope"] = normalized_scope
 
     tasks_dir = task_dir(linked_path)
     active = active_dir(tasks_dir)
@@ -1256,6 +1275,76 @@ def criteria_check_cmd(task_id: str, index: int) -> None:
     linked_path = tasks_dir.parent.parent
     auto_commit(linked_path, f"task: criteria-check {canonical_id}")
     click.echo(f"Toggled: {criteria[index - 1]}")
+
+
+def _read_scope(task_path: Path) -> list[str]:
+    """Return the current scope list from *task_path*'s frontmatter.
+
+    Missing / non-list scope is coerced to ``[]`` so callers can treat
+    the return value as a uniformly-typed list.
+    """
+    fm, _body = parse_task(task_path)
+    current = fm.get("scope")
+    if isinstance(current, list):
+        return [str(entry) for entry in current if isinstance(entry, str)]
+    return []
+
+
+@task.command(name="scope-add")
+@click.argument("task_id")
+@click.argument("entries", nargs=-1, required=True)
+def scope_add_cmd(task_id: str, entries: tuple[str, ...]) -> None:
+    """Append one or more entries to the task's declared ``scope``.
+
+    Re-adding an existing entry is a no-op (``scope.normalize`` dedupes).
+    """
+    cfg, _ = _find_config()
+    task_path, _proj, tasks_dir, canonical_id = _find_task_with_project(cfg, task_id)
+    current = _read_scope(task_path)
+    new_scope = scope_normalize(current + list(entries))
+    update_frontmatter(task_path, {"scope": new_scope})
+    _bump_updated(task_path, tasks_dir, canonical_id)
+    linked_path = tasks_dir.parent.parent
+    auto_commit(linked_path, f"task: scope-add {canonical_id}")
+    click.echo(f"Scope: {new_scope}")
+
+
+@task.command(name="scope-rm")
+@click.argument("task_id")
+@click.argument("entries", nargs=-1, required=True)
+def scope_rm_cmd(task_id: str, entries: tuple[str, ...]) -> None:
+    """Remove one or more entries from the task's declared ``scope``.
+
+    Removing a missing entry is a silent no-op; exit code is always 0
+    when the task itself resolves.
+    """
+    cfg, _ = _find_config()
+    task_path, _proj, tasks_dir, canonical_id = _find_task_with_project(cfg, task_id)
+    current = _read_scope(task_path)
+    to_remove = {entry.strip() for entry in entries if entry.strip()}
+    new_scope = scope_normalize(
+        [entry for entry in current if entry not in to_remove]
+    )
+    update_frontmatter(task_path, {"scope": new_scope})
+    _bump_updated(task_path, tasks_dir, canonical_id)
+    linked_path = tasks_dir.parent.parent
+    auto_commit(linked_path, f"task: scope-rm {canonical_id}")
+    click.echo(f"Scope: {new_scope}")
+
+
+@task.command(name="scope-set")
+@click.argument("task_id")
+@click.argument("entries", nargs=-1, required=True)
+def scope_set_cmd(task_id: str, entries: tuple[str, ...]) -> None:
+    """Replace the task's declared ``scope`` wholesale with *entries*."""
+    cfg, _ = _find_config()
+    task_path, _proj, tasks_dir, canonical_id = _find_task_with_project(cfg, task_id)
+    new_scope = scope_normalize(list(entries))
+    update_frontmatter(task_path, {"scope": new_scope})
+    _bump_updated(task_path, tasks_dir, canonical_id)
+    linked_path = tasks_dir.parent.parent
+    auto_commit(linked_path, f"task: scope-set {canonical_id}")
+    click.echo(f"Scope: {new_scope}")
 
 
 @task.command(name="next")
