@@ -19,7 +19,7 @@
 ## ALWAYS
 
 - ALWAYS use `from __future__ import annotations` in every Python module
-- ALWAYS validate task status against `VALID_STATUSES` before writing (`pending`, `in_progress`, `in_review`, `rejected`, `done`)
+- ALWAYS validate task status against `VALID_STATUSES` before writing (`pending`, `in_progress`, `in_review`, `rejected`, `blocked`, `cancelled`, `done`)
 - ALWAYS validate task type against the hierarchy rules (epic has no parent, story parent must be epic, task/bug/chore parent must be story/feature)
 - ALWAYS call `auto_commit()` after data mutations if git integration is enabled
 - ALWAYS use `encoding="utf-8"` when reading/writing files
