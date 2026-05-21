@@ -282,15 +282,15 @@
       "path": "active/AGE-002-141a.md"
     },
     "AGE-003-3d37": {
-      "status": "pending",
+      "status": "done",
       "priority": "high",
       "type": "task",
       "parent": "AGE-002-141a",
       "depends_on": [],
       "title": "core/scope.py: pure scope logic",
       "updated": "2026-05-21",
-      "completed_at": null,
-      "path": "active/AGE-003-3d37.md"
+      "completed_at": "2026-05-21T23:22:38.208805",
+      "path": "done/AGE-003-3d37.md"
     },
     "AGE-004-6d59": {
       "status": "pending",
