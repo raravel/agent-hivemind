@@ -14,6 +14,7 @@
 - NEVER use `git push --force` in auto-commit or push commands
 - NEVER force `auto_commit=True` in `_init_git` or any other code path — the default stays `False`; users opt in with `hv config set auto_commit true`
 - NEVER create a `.md` file directly under `hivemind/tasks/` for a registered project — task files belong in `active/`, `done/`, or `archive/{YYYY-MM}/`
+- NEVER write speculative paths into a task's `scope` field — if the actual write set cannot be honestly enumerated at plan time, use `scope: ["*"]` so the task is forced to solo execution
 
 ## ALWAYS
 
@@ -30,6 +31,7 @@
 - ALWAYS write new tasks to `hivemind/tasks/active/<id>.md` and let `hv task update --status done` move them to `done/`; `hv task archive` is the only path into `archive/{YYYY-MM}/`
 - ALWAYS pass the `path` keyword to `_update_task_index_entry` (or rely on its preservation of the existing path) when mutating a task — `_index.json` v2 records each task's location relative to `tasks_dir` so resolution skips directory scans
 - ALWAYS bundle `hivemind/` changes (task state moves, reports, harness sync) into the same git commit as the related code change in skills/orchestrators — lesson saves are the documented exception
+- ALWAYS set the `scope` field when creating a new leaf task (`task` / `bug` / `chore`); use `["*"]` honestly when the write set is genuinely unenumerable — empty/missing scope is treated as solo execution and starves parallelism
 
 ## Conventions
 

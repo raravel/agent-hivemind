@@ -258,6 +258,91 @@
       "updated": "2026-04-05",
       "completed_at": "2026-04-05T00:00:00",
       "path": "archive/2026-04/AGE-022.md"
+    },
+    "AGE-001-20aa": {
+      "status": "pending",
+      "priority": "high",
+      "type": "epic",
+      "parent": null,
+      "depends_on": [],
+      "title": "Scope-aware parallel scheduling",
+      "updated": "2026-05-21",
+      "completed_at": null,
+      "path": "active/AGE-001-20aa.md"
+    },
+    "AGE-002-141a": {
+      "status": "pending",
+      "priority": "high",
+      "type": "story",
+      "parent": "AGE-001-20aa",
+      "depends_on": [],
+      "title": "Parallel safety via declared scope",
+      "updated": "2026-05-21",
+      "completed_at": null,
+      "path": "active/AGE-002-141a.md"
+    },
+    "AGE-003-3d37": {
+      "status": "pending",
+      "priority": "high",
+      "type": "task",
+      "parent": "AGE-002-141a",
+      "depends_on": [],
+      "title": "core/scope.py: pure scope logic",
+      "updated": "2026-05-21",
+      "completed_at": null,
+      "path": "active/AGE-003-3d37.md"
+    },
+    "AGE-004-6d59": {
+      "status": "pending",
+      "priority": "high",
+      "type": "task",
+      "parent": "AGE-002-141a",
+      "depends_on": [
+        "AGE-003-3d37"
+      ],
+      "title": "Task frontmatter scope + CLI + _index.json v3",
+      "updated": "2026-05-21",
+      "completed_at": null,
+      "path": "active/AGE-004-6d59.md"
+    },
+    "AGE-005-07ca": {
+      "status": "pending",
+      "priority": "high",
+      "type": "task",
+      "parent": "AGE-002-141a",
+      "depends_on": [
+        "AGE-004-6d59"
+      ],
+      "title": "hv run --ready-only uses packing + JSON object output",
+      "updated": "2026-05-21",
+      "completed_at": null,
+      "path": "active/AGE-005-07ca.md"
+    },
+    "AGE-006-d923": {
+      "status": "pending",
+      "priority": "medium",
+      "type": "task",
+      "parent": "AGE-002-141a",
+      "depends_on": [
+        "AGE-005-07ca"
+      ],
+      "title": "/hv:plan SKILL: inline scope + references/scope-backfill.md",
+      "updated": "2026-05-21",
+      "completed_at": null,
+      "path": "active/AGE-006-d923.md"
+    },
+    "AGE-007-9ed7": {
+      "status": "pending",
+      "priority": "medium",
+      "type": "task",
+      "parent": "AGE-002-141a",
+      "depends_on": [
+        "AGE-005-07ca"
+      ],
+      "title": "/hv:task SKILL: step 8.5 scope-drift gate",
+      "updated": "2026-05-21",
+      "completed_at": null,
+      "path": "active/AGE-007-9ed7.md"
     }
   }
 }
