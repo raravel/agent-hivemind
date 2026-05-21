@@ -2,15 +2,15 @@
   "version": 3,
   "tasks": {
     "AGE-001-20aa": {
-      "status": "pending",
+      "status": "done",
       "priority": "high",
       "type": "epic",
       "parent": null,
       "depends_on": [],
       "title": "Scope-aware parallel scheduling",
-      "updated": "2026-05-21",
-      "completed_at": null,
-      "path": "active/AGE-001-20aa.md",
+      "updated": "2026-05-22",
+      "completed_at": "2026-05-22T00:17:47.451387",
+      "path": "done/AGE-001-20aa.md",
       "scope": []
     },
     "AGE-001": {
@@ -26,15 +26,15 @@
       "scope": []
     },
     "AGE-002-141a": {
-      "status": "pending",
+      "status": "done",
       "priority": "high",
       "type": "story",
       "parent": "AGE-001-20aa",
       "depends_on": [],
       "title": "Parallel safety via declared scope",
-      "updated": "2026-05-21",
-      "completed_at": null,
-      "path": "active/AGE-002-141a.md",
+      "updated": "2026-05-22",
+      "completed_at": "2026-05-22T00:17:47.437372",
+      "path": "done/AGE-002-141a.md",
       "scope": []
     },
     "AGE-002": {
@@ -128,7 +128,7 @@
       "scope": []
     },
     "AGE-007-9ed7": {
-      "status": "pending",
+      "status": "done",
       "priority": "medium",
       "type": "task",
       "parent": "AGE-002-141a",
@@ -136,9 +136,9 @@
         "AGE-005-07ca"
       ],
       "title": "/hv:task SKILL: step 8.5 scope-drift gate",
-      "updated": "2026-05-21",
-      "completed_at": null,
-      "path": "active/AGE-007-9ed7.md",
+      "updated": "2026-05-22",
+      "completed_at": "2026-05-22T00:17:47.414279",
+      "path": "done/AGE-007-9ed7.md",
       "scope": []
     },
     "AGE-017": {

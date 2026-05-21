@@ -47,11 +47,11 @@ If any are found, show: **"N reports have unreviewed incidents. Run `hv-feedback
 ### 1. Fetch ready task(s)
 
 - **Sequential mode**: `hv run --format json` — returns the next ready task or exit 1.
-- **Parallel mode**: `hv run --ready-only --limit <N> --format json` — returns up to N ready tasks as a JSON array. N = `hv config parallel.max_concurrency` (default 2).
+- **Parallel mode**: `hv run --ready-only --limit <N> --format json` — returns a JSON object `{"tasks": [...task entries...], "deferred": [{"id", "reason", "conflict_with", "overlap"}, ...]}`. N = `hv config parallel.max_concurrency` (default 2). Use `data["tasks"]` for the batch to spawn; before proceeding, log each `data["deferred"][i]` to the user as `deferred <id> conflict_with=<peer> overlap=<entries>` so scope conflicts are visible. Losing candidates stay pending — they become next-round anchors by priority, no extra action required.
 
 A "ready" task is `pending` AND all `depends_on` entries are `done`.
 
-If no tasks are available (exit code 1 or empty array) — stop.
+If no tasks are available (exit code 1, or `data["tasks"]` is empty with nothing deferred) — stop.
 
 ### 2. Mark task(s) as in_progress
 
@@ -156,6 +156,27 @@ For each task:
    [FAIL] Rate limiting at 100 req/min — no rate limit code found
    ```
 4. **On any [FAIL]**: use `send_input` to the same worker with the failed criteria. Max 2 coding retries.
+
+### 8.5. Scope-drift gate (YOU do this — NEVER skip)
+
+After the coding worker returns and step 8 passes, but BEFORE running step 9's verification commands:
+
+1. Compute `touched = git -C <worktree> diff <base>..HEAD --name-only`.
+2. For each path in `touched`, confirm it matches at least one entry in the task's declared `scope` (use `core.scope` matching semantics — path glob bidirectional + namespaced tags). A path that does not match ANY scope entry is an out-of-scope write.
+3. On any unmatched path: use `send_input` to the worker —
+   > "Out-of-scope writes detected: `<list>`. Either revert these files OR if the path legitimately belongs to this task, call `hv task scope-add <task-id> <path>` first so the orchestrator can re-check disjointness against in-flight peers."
+4. If the worker requested `hv task scope-add`, YOU (the orchestrator) must verify the new scope entry is disjoint from every in-flight worker's declared scope (use `hv task get <id>` per peer + `core.scope.conflicts`). On any conflict, use `send_input`:
+   > "Scope-add denied: `<path>` conflicts with in-flight peer `<peer-id>` (overlap: `<entries>`). The peer has priority — revert the file from this worktree."
+
+Retry policy: maximum **1** round. On exhaustion, block the task with:
+
+```bash
+hv task update <TASK-ID> --status blocked --reason "contract-drift: out-of-scope writes"
+```
+
+Record in the report's `## Incident` section: which files drifted, whether scope-add was attempted, and (if applicable) which peer blocked it.
+
+**Why this gate matters**: scope is a *reservation contract* across in-flight workers. A silent out-of-scope write breaks the disjointness guarantee that lets parallel tasks coexist — the peer who legitimately owns that path will hit a merge conflict at the orchestrator's serialized squash-merge.
 
 ### 9. Run verification commands (YOU do this — NEVER delegate)
 
@@ -498,11 +519,12 @@ Proceed immediately to the next task:
 
 ## Parallel-mode specifics
 
-1. `hv run --ready-only --limit N --format json` returns up to N ready tasks.
-2. For each task, spawn a worker with both `run_in_background: true` AND `isolation: "worktree"`.
-3. You receive completion notifications from the runtime. Collect workers as they finish; **serialize steps 8–12** (verify + run checks + review + merge) to avoid conflicting merges.
-4. After each merge, call `hv run --ready-only` again to pick up tasks that are now ready.
-5. Stop when no more ready tasks and no in-flight workers.
+1. `hv run --ready-only --limit N --format json` returns a JSON object `{"tasks": [...], "deferred": [...]}`. Use `data["tasks"]` for the batch to spawn.
+2. Scope-conflict deferrals from step 1 (`data["deferred"]`) are automatic — losing candidates stay in the pending pool and become the next round's anchor by priority. No orchestrator action needed beyond surfacing the deferred list to the user once per round.
+3. For each task, spawn a worker with both `run_in_background: true` AND `isolation: "worktree"`.
+4. You receive completion notifications from the runtime. Collect workers as they finish; **serialize steps 8–12** (verify + scope-drift gate + run checks + review + merge) to avoid conflicting merges.
+5. After each merge, call `hv run --ready-only` again to pick up tasks that are now ready.
+6. Stop when no more ready tasks and no in-flight workers.
 
 If `parallel.max_concurrency = 1` or `--sequential` is passed: fall back to the sequential flow.
 
@@ -552,6 +574,7 @@ Record incident in report, proceed to next task (do NOT stop the pipeline).
 - **NEVER** write reports or feedback in Korean. English only for BM25 consistency.
 - **NEVER skip step 11.5** for normal tasks. Skip-condition (no unlisted files AND no manifest change) is fine; explicit skip is not.
 - **NEVER edit a feature's contract via task code.** The contract-drift guard blocks removed/renamed identifiers found in specs; the resolution is `/hv:plan`, not silent code change.
+- **NEVER** let a worker write outside its declared `scope` without explicit `hv task scope-add <id> <path>` and orchestrator re-check against in-flight peers. Out-of-scope writes block the task with `contract-drift: out-of-scope writes`.
 - **ALWAYS** use `hv feedback draft-add --auto-promote` (target features or target tech-stack with `--section "Active Dependencies"`) for binding sync. Do not write to harness docs directly.
 - **ALWAYS** bundle hivemind/ mutations (task status moves, reports, harness sync) into the same git commit as the code change for that task. In step 12, run `git add hivemind/` BEFORE `git commit`. Lesson saves from step 15 are the documented exception — they ride their own commit.
 - **NEVER** rely on `auto_commit=true` to record task state. Since v6 the default is OFF and stays OFF: the orchestrator does the bundling so user `git log` shows one commit per task, not a clerical trail.
