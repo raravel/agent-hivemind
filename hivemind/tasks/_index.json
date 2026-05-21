@@ -88,7 +88,7 @@
       "scope": []
     },
     "AGE-005-07ca": {
-      "status": "pending",
+      "status": "done",
       "priority": "high",
       "type": "task",
       "parent": "AGE-002-141a",
@@ -96,9 +96,9 @@
         "AGE-004-6d59"
       ],
       "title": "hv run --ready-only uses packing + JSON object output",
-      "updated": "2026-05-21",
-      "completed_at": null,
-      "path": "active/AGE-005-07ca.md",
+      "updated": "2026-05-22",
+      "completed_at": "2026-05-22T00:00:10.985634",
+      "path": "done/AGE-005-07ca.md",
       "scope": []
     },
     "AGE-005": {

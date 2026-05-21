@@ -20,6 +20,7 @@ from hivemind.commands.task import (
 )
 from hivemind.core.config import HivemindConfig
 from hivemind.core.parser import parse_task
+from hivemind.core.scope import ConflictReport, pack_non_conflicting
 
 
 def _find_in_progress(
@@ -122,28 +123,63 @@ def _output_task(
             click.echo(body)
 
 
-def _output_tasks_array(
-    items: list[tuple[dict[str, object], str, Path]],
+def _output_ready_batch(
+    selected_items: list[tuple[dict[str, object], str, Path]],
+    deferred_reports: list[ConflictReport],
     fmt: str,
 ) -> None:
-    """Output multiple ready tasks. JSON-only mode prints a JSON array."""
+    """Output the packed ready-only batch.
+
+    The contract (AGE-005-07ca):
+
+    - JSON mode emits a single object ``{"tasks": [...], "deferred": [...]}``
+      where each task entry has the same ``{"id", "frontmatter", "body",
+      "path"}`` shape used elsewhere, and each deferred entry is
+      ``{"id", "reason", "conflict_with", "overlap"}`` with ``reason``
+      fixed to ``"scope conflict"``.
+    - Text mode prints selected one-liners to stdout (one per line) and
+      deferred entries to stderr — one ``deferred <id>  (conflict_with=
+      <peer_id>, overlap=<comma-joined>)`` line per loser.
+    """
     if fmt == "json":
-        payload = [
+        tasks_payload: list[dict[str, object]] = [
             {
                 "id": fm.get("id", ""),
                 "frontmatter": fm,
                 "body": body,
                 "path": str(path),
             }
-            for fm, body, path in items
+            for fm, body, path in selected_items
         ]
-        click.echo(json.dumps(payload, indent=2, default=str))
+        deferred_payload: list[dict[str, object]] = [
+            {
+                "id": report.id,
+                "reason": "scope conflict",
+                "conflict_with": report.conflict_with,
+                "overlap": list(report.overlap),
+            }
+            for report in deferred_reports
+        ]
+        click.echo(
+            json.dumps(
+                {"tasks": tasks_payload, "deferred": deferred_payload},
+                indent=2,
+                default=str,
+            )
+        )
     else:
-        for i, (fm, _body, _path) in enumerate(items):
+        for i, (fm, _body, _path) in enumerate(selected_items):
             if i > 0:
                 click.echo("")
                 click.echo("---")
             click.echo(f"{fm.get('id', '')}  [{fm.get('type', '')}]  {fm.get('title', '')}")
+        for report in deferred_reports:
+            overlap_str = ",".join(report.overlap)
+            click.echo(
+                f"deferred {report.id}  "
+                f"(conflict_with={report.conflict_with}, overlap={overlap_str})",
+                err=True,
+            )
 
 
 @click.command()
@@ -210,15 +246,39 @@ def run(
 
     if ready_only:
         ready = _find_ready_tasks(cfg, scan_project, leaf_only=True)
-        if limit is not None and limit > 0:
-            ready = ready[:limit]
-        if not ready:
+
+        # Build (id, scope) tuples for the packer, mapping each id back to
+        # its full (fm, body, path) entry for later assembly.
+        ready_by_id: dict[str, tuple[dict[str, object], str, Path]] = {}
+        candidates_for_pack: list[tuple[str, list[str]]] = []
+        for fm, body, path in ready:
+            tid = str(fm.get("id", ""))
+            raw_scope = fm.get("scope")
+            scope_list: list[str] = (
+                [str(x) for x in raw_scope] if isinstance(raw_scope, list) else []
+            )
+            ready_by_id[tid] = (fm, body, path)
+            candidates_for_pack.append((tid, scope_list))
+
+        pack_limit = (
+            limit if (limit is not None and limit > 0) else len(candidates_for_pack)
+        )
+        selected_ids, deferred_reports = pack_non_conflicting(
+            candidates_for_pack, pack_limit
+        )
+
+        selected_items: list[tuple[dict[str, object], str, Path]] = [
+            ready_by_id[sid] for sid in selected_ids if sid in ready_by_id
+        ]
+
+        if not selected_items and not deferred_reports:
             if fmt == "json":
-                click.echo("[]")
+                click.echo(json.dumps({"tasks": [], "deferred": []}, indent=2))
             else:
                 click.echo("No ready tasks available")
             sys.exit(1)
-        _output_tasks_array(ready, fmt)
+
+        _output_ready_batch(selected_items, deferred_reports, fmt)
         return
 
     # Auto-detect: first look for in_progress

@@ -256,10 +256,12 @@ class TestReadyOnly:
         result = _invoke_run(tmp_path, ["--ready-only", "--format", "json"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        assert isinstance(data, list)
-        assert len(data) == 2
-        # High priority first
-        assert data[0]["frontmatter"]["title"] == "Task A"
+        # Both tasks have empty scope → solo semantics; high priority wins,
+        # the lower-priority peer is deferred (scope conflict).
+        assert isinstance(data, dict)
+        assert len(data["tasks"]) == 1
+        assert len(data["deferred"]) == 1
+        assert data["tasks"][0]["frontmatter"]["title"] == "Task A"
 
     def test_respects_depends_on(self, tmp_path: Path) -> None:
         _make_workspace(tmp_path)
@@ -272,25 +274,35 @@ class TestReadyOnly:
         result = _invoke_run(tmp_path, ["--ready-only", "--format", "json"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        # Only root is ready; child is blocked by dependency
-        assert len(data) == 1
-        assert data[0]["frontmatter"]["title"] == "Root"
+        # Only root is ready; child is blocked by dependency. The lone
+        # ready task is always selected — no peer means no conflict.
+        assert isinstance(data, dict)
+        assert len(data["tasks"]) == 1
+        assert data["tasks"][0]["frontmatter"]["title"] == "Root"
+        assert data["deferred"] == []
 
     def test_limit_caps_results(self, tmp_path: Path) -> None:
         _make_workspace(tmp_path)
+        # Use disjoint scopes so --limit alone drives the cap (otherwise
+        # solo semantics would defer everything but the first).
         for i in range(5):
-            _invoke_task(tmp_path, ["create", "-p", "myproj", "-t", f"T{i}"])
+            _invoke_task(
+                tmp_path,
+                ["create", "-p", "myproj", "-t", f"T{i}", "--scope", f"src/{i}.py"],
+            )
 
         result = _invoke_run(tmp_path, ["--ready-only", "--limit", "2", "--format", "json"])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        assert len(data) == 2
+        assert len(data["tasks"]) == 2
+        # Candidates beyond the limit are not weighed → no deferred entries.
+        assert data["deferred"] == []
 
     def test_empty_returns_empty_array_and_exit_1(self, tmp_path: Path) -> None:
         _make_workspace(tmp_path)
         result = _invoke_run(tmp_path, ["--ready-only", "--format", "json"])
         assert result.exit_code == 1
-        assert result.output.strip() == "[]"
+        assert json.loads(result.output) == {"tasks": [], "deferred": []}
 
 
 class TestProjectAutoDetect:
