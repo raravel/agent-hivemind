@@ -14,15 +14,15 @@
       "scope": []
     },
     "AGE-001": {
-      "status": "pending",
+      "status": "cancelled",
       "priority": "high",
       "type": "epic",
       "parent": null,
       "depends_on": [],
       "title": "Harness Plugin v2.1 Improvements",
-      "updated": "2026-04-05",
+      "updated": "2026-05-22",
       "completed_at": null,
-      "path": "active/AGE-001.md",
+      "path": "done/AGE-001.md",
       "scope": []
     },
     "AGE-002-141a": {
@@ -38,27 +38,27 @@
       "scope": []
     },
     "AGE-002": {
-      "status": "pending",
+      "status": "cancelled",
       "priority": "high",
       "type": "story",
       "parent": "AGE-001",
       "depends_on": [],
       "title": "Orchestrator Pipeline",
-      "updated": "2026-04-05",
+      "updated": "2026-05-22",
       "completed_at": null,
-      "path": "active/AGE-002.md",
+      "path": "done/AGE-002.md",
       "scope": []
     },
     "AGE-003": {
-      "status": "pending",
+      "status": "cancelled",
       "priority": "high",
       "type": "story",
       "parent": "AGE-001",
       "depends_on": [],
       "title": "Task System Fixes",
-      "updated": "2026-04-05",
+      "updated": "2026-05-22",
       "completed_at": null,
-      "path": "active/AGE-003.md",
+      "path": "done/AGE-003.md",
       "scope": []
     },
     "AGE-004-6d59": {
@@ -76,15 +76,15 @@
       "scope": []
     },
     "AGE-004": {
-      "status": "pending",
+      "status": "cancelled",
       "priority": "medium",
       "type": "story",
       "parent": "AGE-001",
       "depends_on": [],
       "title": "Pipeline Quality",
-      "updated": "2026-04-05",
+      "updated": "2026-05-22",
       "completed_at": null,
-      "path": "active/AGE-004.md",
+      "path": "done/AGE-004.md",
       "scope": []
     },
     "AGE-005-07ca": {
@@ -102,15 +102,15 @@
       "scope": []
     },
     "AGE-005": {
-      "status": "pending",
+      "status": "cancelled",
       "priority": "medium",
       "type": "story",
       "parent": "AGE-001",
       "depends_on": [],
       "title": "Knowledge Base Tuning",
-      "updated": "2026-04-05",
+      "updated": "2026-05-22",
       "completed_at": null,
-      "path": "active/AGE-005.md",
+      "path": "done/AGE-005.md",
       "scope": []
     },
     "AGE-006-d923": {
@@ -142,15 +142,15 @@
       "scope": []
     },
     "AGE-017": {
-      "status": "pending",
+      "status": "cancelled",
       "priority": "medium",
       "type": "story",
       "parent": "AGE-001",
       "depends_on": [],
       "title": "Search and Feedback Improvements",
-      "updated": "2026-04-05",
+      "updated": "2026-05-22",
       "completed_at": null,
-      "path": "active/AGE-017.md",
+      "path": "done/AGE-017.md",
       "scope": []
     },
     "AGE-003-3d37": {

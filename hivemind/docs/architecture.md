@@ -52,7 +52,7 @@ graph TB
         TASKS_ACTIVE["tasks/active/  (pending · in_progress · in_review · rejected)"]
         TASKS_DONE["tasks/done/  (recently completed)"]
         TASKS_ARCHIVE["tasks/archive/{YYYY-MM}/  (long-finished)"]
-        TASKS_INDEX["tasks/_index.json  (v2: per-task path)"]
+        TASKS_INDEX["tasks/_index.json  (v3: per-task path + scope)"]
         REPORTS["tasks/_reports/{TASK-ID}-report.md"]
         LINK["link.json"]
     end
